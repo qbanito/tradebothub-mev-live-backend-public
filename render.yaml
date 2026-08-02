@@ -12,13 +12,41 @@ services:
         value: 22
       - key: EXECUTION_MODE
         value: paper
+      - key: LIVE_TRADING_ENABLED
+        value: false
+      - key: SIMULATE_ONLY
+        value: false
       - key: CORS_ORIGIN
         sync: false
       - key: HELIUS_API_KEY
         sync: false
+      - key: SOLANA_RPC_URL
+        sync: false
+      - key: HELIUS_SENDER_URL
+        value: http://ewr-sender.helius-rpc.com/fast
+      - key: SIGNER_PRIVATE_KEY_BASE58
+        sync: false
+      - key: SIGNER_PRIVATE_KEY_JSON
+        sync: false
+      - key: JUPITER_API_KEY
+        sync: false
+      - key: TX_BROADCAST_MODE
+        value: rpc
+      - key: SWAP_SLIPPAGE_BPS
+        value: 50
+      - key: MAX_EXECUTION_USD
+        value: 500
+      - key: MAX_PRIORITY_FEE_LAMPORTS
+        value: 1000000
+      - key: SENDER_TIP_LAMPORTS
+        value: 5000
+      - key: SKIP_PREFLIGHT
+        value: false
       - key: POLL_INTERVAL_MS
         value: 15000
       - key: MIN_SPREAD_BPS
         value: 15
       - key: DEFAULT_CAPITAL_USD
         value: 10000
+      - key: ESTIMATED_COST_BPS
+        value: 12
