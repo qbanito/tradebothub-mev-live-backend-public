@@ -875,6 +875,9 @@ function consecutiveFailureCount(entries = state.tradeLedger) {
 function tokenExposureMap(entries = recentAttemptsForToday()) {
   const map = {};
   for (const item of entries) {
+    if (!item.success) {
+      continue;
+    }
     if (!item.assetSymbol) {
       continue;
     }
@@ -2501,6 +2504,7 @@ function checkRiskGuardrails({
   priceImpactPct = 0,
   routePlan = [],
   mode = 'wallet-build',
+  limitUsd = CONFIG.maxExecutionUsd,
 }) {
   const summary = computeRiskSummary();
   if (state.risk.killSwitch) {
@@ -2543,12 +2547,12 @@ function checkRiskGuardrails({
     };
   }
 
-  if (Number(swapUsdValue || 0) > CONFIG.maxExecutionUsd) {
+  if (Number(swapUsdValue || 0) > Number(limitUsd || CONFIG.maxExecutionUsd)) {
     return {
       ok: false,
       status: 400,
       code: 'max_execution_usd',
-      error: `Swap size exceeds MAX_EXECUTION_USD (${CONFIG.maxExecutionUsd})`,
+      error: `Swap size exceeds allowed limit (${Number(limitUsd || CONFIG.maxExecutionUsd)} USD)`,
       summary,
     };
   }
@@ -2960,6 +2964,10 @@ function handleAdvancedSimulation(res, body) {
     priceImpactPct: 0,
     routePlan: routePlanFromOpportunity(opportunity),
     mode: 'demo',
+    limitUsd:
+      plan.capitalSource === 'flash-loan'
+        ? CONFIG.flashLoanMaxBorrowUsd
+        : CONFIG.maxExecutionUsd,
   });
 
   if (!guardrails.ok) {
