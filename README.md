@@ -1,6 +1,6 @@
-# TradeBotHub MEV Backend v3.1
+# TradeBotHub MEV Backend v3.2
 
-Production-oriented Solana market intelligence backend with guarded live execution support. It exposes market snapshots, cross-DEX opportunity estimates, SSE streaming, paper simulation, Jupiter swap quoting, signer readiness, and optional live swap execution.
+Production-oriented market intelligence backend with a multi-chain scanner and guarded Solana execution support. It exposes market snapshots, cross-DEX opportunity estimates, SSE streaming, paper simulation, Jupiter swap quoting, signer readiness, and optional live swap execution.
 
 ## Deploy on Render
 
@@ -61,6 +61,7 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - A successful quote is not a profit guarantee.
 - Live execution stays blocked until mode, flags, signer, and broadcast prerequisites are all satisfied.
 - Wallet-connected execution is the recommended path when you want the browser frontend to sign locally instead of storing a private key in Render.
+- Multi-chain opportunities are discovery-only unless you add a real executor for that chain. The built-in executor flow remains Solana-focused.
 
 ## Scanner tuning
 
@@ -70,5 +71,16 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - `MIN_OPPORTUNITY_CAPITAL_USD`
 - `MAX_PAIRS_PER_TOKEN`
 - `MAX_MEDIAN_DEVIATION_BPS`
+- `MAX_MARKET_ROWS`
+- `MAX_OPPORTUNITIES`
+- `SCANNER_CHAIN_IDS`
+- `SCANNER_ASSET_KEYS`
 
 These filters are used to reject low-liquidity and outlier markets so the opportunity board shows more realistic spreads instead of impossible stablecoin anomalies.
+
+## Multi-chain scanner notes
+
+- The scanner can now watch a configurable catalog across Solana, Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Chain, and Avalanche.
+- `SCANNER_CHAIN_IDS` lets you reduce or expand the active chain set without editing code.
+- `SCANNER_ASSET_KEYS` lets you narrow the catalog to specific keys such as `solana:SOL,base:AERO,arbitrum:ARB`.
+- The execution endpoints and wallet workflow are still intentionally scoped to Solana while the discovery layer expands across more chains.
