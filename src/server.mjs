@@ -1,211 +1,111 @@
 import http from 'node:http';
-import fs from 'node:fs';
-import path from 'node:path';
 import { URL } from 'node:url';
+import crypto from 'node:crypto';
 
-const PORT = Number(process.env.PORT || 8787);
-const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
-const POLL_INTERVAL_MS = Math.max(5000, Number(process.env.POLL_INTERVAL_MS || 15000));
-const MIN_SPREAD_BPS = Number(process.env.MIN_SPREAD_BPS || 20);
-const MAX_PAIRS_PER_TOKEN = Number(process.env.MAX_PAIRS_PER_TOKEN || 25);
-const DEFAULT_CAPITAL_USD = Number(process.env.DEFAULT_CAPITAL_USD || 10000);
-const ESTIMATED_COST_BPS = Number(process.env.ESTIMATED_COST_BPS || 12);
-const HELIUS_API_KEY = process.env.HELIUS_API_KEY || '';
-const DEX_PROGRAM_IDS = (process.env.DEX_PROGRAM_IDS || '').split(',').map(x=>x.trim()).filter(Boolean);
-
-const DEFAULT_WATCHLIST = [
-  {symbol:'SOL', mint:'So11111111111111111111111111111111111111112'},
-  {symbol:'JUP', mint:'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN'},
-  {symbol:'BONK', mint:'DezXAZ8z7PnrnRJjz3wXBoRgixCa6WK7ydj56YpZac1p'},
-  {symbol:'WIF', mint:'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLZQzvXQyDPN'},
-  {symbol:'USDC', mint:'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'}
-];
-const custom = (process.env.WATCHLIST_MINTS || '').split(',').map(x=>x.trim()).filter(Boolean);
-const WATCHLIST = custom.length ? custom.map((mint,i)=>({symbol:`TOKEN${i+1}`,mint})) : DEFAULT_WATCHLIST;
-const state = {
-  startedAt: new Date().toISOString(),
-  lastUpdated: null,
-  cycle: 0,
-  markets: [],
-  opportunities: [],
-  stats: {},
-  transactions: [],
-  errors: [],
-  source: 'DEX Screener live API',
-  executionMode: 'paper'
+const cfg = {
+  port: Number(process.env.PORT || 8787),
+  cors: process.env.CORS_ORIGIN || '*',
+  mode: process.env.EXECUTION_MODE || 'paper',
+  pollMs: Math.max(5000, Number(process.env.POLL_INTERVAL_MS || 15000)),
+  minSpreadBps: Number(process.env.MIN_SPREAD_BPS || 15),
+  capital: Number(process.env.DEFAULT_CAPITAL_USD || 10000),
+  costBps: Number(process.env.ESTIMATED_COST_BPS || 12),
+  heliusKey: process.env.HELIUS_API_KEY || '',
+  dexPrograms: (process.env.DEX_PROGRAM_IDS || '').split(',').map(x=>x.trim()).filter(Boolean)
 };
-const clients = new Set();
 
-function corsHeaders(extra={}) { return {'access-control-allow-origin':CORS_ORIGIN,'access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type,authorization','cache-control':'no-store',...extra}; }
-function send(res,status,data,headers={}) { const body=JSON.stringify(data); res.writeHead(status,corsHeaders({'content-type':'application/json; charset=utf-8','content-length':Buffer.byteLength(body),...headers})); res.end(body); }
-function round(n,d=2){ const p=10**d; return Math.round((Number(n)+Number.EPSILON)*p)/p; }
-function nowTime(){ return new Date().toLocaleTimeString('en-US',{hour12:false,timeZone:'UTC'}); }
-function safeNum(v){ const n=Number(v); return Number.isFinite(n)?n:0; }
-function emit(event,payload){ const msg=`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`; for(const res of clients){ try{res.write(msg)}catch{clients.delete(res)} } }
+const state = {
+  startedAt: Date.now(), market: [], opportunities: [], transactions: [], arbitrages: [], errors: [],
+  searchers: new Map(), validators: new Map(), clients: new Set(), scanCount: 0, indexer: 'disabled', lastScan: null
+};
+const watch = [
+  ['SOL','So11111111111111111111111111111111111111112'],
+  ['JUP','JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN'],
+  ['BONK','DezXAZ8z7PnrnRJjz3wXBoRgixCa6F9pG8eZrG1pPB263'],
+  ['WIF','EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLhL7Y1P2w1V']
+];
+const now=()=>new Date().toISOString();
+const uid=(p='id')=>`${p}_${crypto.randomUUID().slice(0,8)}`;
+function broadcast(type,data){ const msg=`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`; for(const r of state.clients){ try{r.write(msg)}catch{state.clients.delete(r)} } }
+function err(scope,e){ const row={id:uid('err'),scope,message:String(e?.message||e),at:now()}; state.errors.unshift(row); state.errors=state.errors.slice(0,100); console.error(scope,e); }
+function page(arr,req){ const limit=Math.min(250,Math.max(1,Number(req.query.limit||50))), offset=Math.max(0,Number(req.query.offset||0)); return {items:arr.slice(offset,offset+limit),total:arr.length,limit,offset}; }
 
-async function fetchJson(url, options={}, timeout=9000){
-  const c=new AbortController(); const t=setTimeout(()=>c.abort(),timeout);
-  try{ const r=await fetch(url,{...options,signal:c.signal,headers:{'user-agent':'TradeBotHub-MEV/1.0',...(options.headers||{})}}); if(!r.ok) throw new Error(`${r.status} ${r.statusText}`); return await r.json(); }
-  finally{clearTimeout(t)}
+async function fetchJson(url, timeout=9000){ const c=new AbortController(); const t=setTimeout(()=>c.abort(),timeout); try{const r=await fetch(url,{signal:c.signal,headers:{accept:'application/json','user-agent':'TradeBotHub-MEV/3.0'}}); if(!r.ok) throw new Error(`${r.status} ${r.statusText}`); return await r.json();} finally{clearTimeout(t)} }
+
+function normalizePair(symbol,p){
+  return {symbol,dex:p.dexId||'unknown',pairAddress:p.pairAddress,price:Number(p.priceUsd||0),liquidity:Number(p.liquidity?.usd||0),volume24h:Number(p.volume?.h24||0),txns24h:Number(p.txns?.h24?.buys||0)+Number(p.txns?.h24?.sells||0),change24h:Number(p.priceChange?.h24||0),url:p.url||'',base:p.baseToken?.symbol,quote:p.quoteToken?.symbol};
 }
-
-function normalizePair(pair, symbol){
-  return {
-    symbol,
-    chainId: pair.chainId,
-    dexId: pair.dexId || 'unknown',
-    pairAddress: pair.pairAddress,
-    url: pair.url,
-    baseSymbol: pair.baseToken?.symbol || symbol,
-    quoteSymbol: pair.quoteToken?.symbol || 'USD',
-    priceUsd: safeNum(pair.priceUsd),
-    priceNative: safeNum(pair.priceNative),
-    liquidityUsd: safeNum(pair.liquidity?.usd),
-    volume24h: safeNum(pair.volume?.h24),
-    txns24h: safeNum(pair.txns?.h24?.buys)+safeNum(pair.txns?.h24?.sells),
-    priceChange24h: safeNum(pair.priceChange?.h24),
-    fdv: safeNum(pair.fdv),
-    createdAt: pair.pairCreatedAt || null
-  };
-}
-
-async function fetchTokenPairs(token){
-  const url=`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(token.mint)}`;
-  const data=await fetchJson(url);
-  const pairs=(data.pairs||[]).filter(p=>p.chainId==='solana' && safeNum(p.priceUsd)>0 && safeNum(p.liquidity?.usd)>0)
-    .sort((a,b)=>safeNum(b.liquidity?.usd)-safeNum(a.liquidity?.usd)).slice(0,MAX_PAIRS_PER_TOKEN);
-  return pairs.map(p=>normalizePair(p,token.symbol));
-}
-
-function makeOpportunities(markets){
-  const bySymbol=new Map();
-  for(const m of markets){ if(!bySymbol.has(m.symbol)) bySymbol.set(m.symbol,[]); bySymbol.get(m.symbol).push(m); }
-  const out=[];
-  for(const [symbol,pairs] of bySymbol){
-    const liquid=pairs.filter(p=>p.liquidityUsd>=10000 && ['USDC','USDT','USD','SOL'].includes(p.quoteSymbol));
-    for(let i=0;i<liquid.length;i++) for(let j=i+1;j<liquid.length;j++){
-      const a=liquid[i], b=liquid[j];
-      if(a.dexId===b.dexId || !a.priceUsd || !b.priceUsd) continue;
-      const buy=a.priceUsd<b.priceUsd?a:b, sell=a.priceUsd<b.priceUsd?b:a;
-      const spreadBps=((sell.priceUsd/buy.priceUsd)-1)*10000;
-      if(spreadBps<MIN_SPREAD_BPS) continue;
-      const maxCapital=Math.max(100,Math.min(DEFAULT_CAPITAL_USD,buy.liquidityUsd*0.0025,sell.liquidityUsd*0.0025));
-      const gross=maxCapital*spreadBps/10000;
-      const variableCost=maxCapital*ESTIMATED_COST_BPS/10000;
-      const liquidityPenalty=maxCapital/Math.max(1,Math.min(buy.liquidityUsd,sell.liquidityUsd))*gross*3;
-      const costs=variableCost+Math.min(gross*0.65,liquidityPenalty)+0.01;
-      const net=gross-costs;
-      const score=Math.max(1,Math.min(99,Math.round(65+Math.min(20,spreadBps/10)+Math.min(10,Math.log10(Math.min(buy.liquidityUsd,sell.liquidityUsd))*1.6)-Math.min(25,liquidityPenalty))));
-      out.push({
-        id:`LIVE-${symbol}-${buy.dexId}-${sell.dexId}-${Date.now()}`,
-        detectedAt:new Date().toISOString(), time:nowTime(),
-        route:[buy.dexId,sell.dexId], pair:`${symbol}/USD`, strategy:'Cross-DEX',
-        capital:round(maxCapital), gross:round(gross), costs:round(costs), net:round(net), score,
-        status:net>0?'Detected':'Rejected', spreadBps:round(spreadBps,1),
-        buyPrice:buy.priceUsd, sellPrice:sell.priceUsd,
-        buyPair:buy.pairAddress, sellPair:sell.pairAddress,
-        buyUrl:buy.url, sellUrl:sell.url,
-        liquidity:round(Math.min(buy.liquidityUsd,sell.liquidityUsd)),
-        steps:[[buy.dexId,`Buy ${symbol}`,`${round(maxCapital)} USD @ ${buy.priceUsd}`],[sell.dexId,`Sell ${symbol}`,`${round(maxCapital+gross)} USD @ ${sell.priceUsd}`]],
-        disclaimer:'Observed cross-venue price spread. It is not executable PnL until direct pool simulation, account locking, priority fees and transaction landing are validated.'
-      });
+function buildOpportunities(rows){
+  const out=[]; const by=new Map(); for(const r of rows){if(!r.price||!r.liquidity)continue; const a=by.get(r.symbol)||[];a.push(r);by.set(r.symbol,a)}
+  for(const [symbol,pairs] of by){
+    for(let i=0;i<pairs.length;i++) for(let j=i+1;j<pairs.length;j++){
+      if(pairs[i].dex===pairs[j].dex) continue;
+      const buy=pairs[i].price<pairs[j].price?pairs[i]:pairs[j], sell=buy===pairs[i]?pairs[j]:pairs[i];
+      const spreadBps=((sell.price-buy.price)/buy.price)*10000; if(spreadBps<cfg.minSpreadBps) continue;
+      const liq=Math.min(buy.liquidity,sell.liquidity), capital=Math.max(100,Math.min(cfg.capital,liq*0.002));
+      const gross=capital*spreadBps/10000, estimatedCosts=capital*cfg.costBps/10000, net=gross-estimatedCosts;
+      out.push({id:uid('opp'),detectedAt:now(),symbol,strategy:'Cross-DEX',status:net>0?'quoted':'rejected',buyDex:buy.dex,sellDex:sell.dex,buyPrice:buy.price,sellPrice:sell.price,spreadBps:+spreadBps.toFixed(2),capital:+capital.toFixed(2),gross:+gross.toFixed(2),costs:+estimatedCosts.toFixed(2),net:+net.toFixed(2),liquidity:+liq.toFixed(2),score:Math.max(1,Math.min(99,Math.round(55+Math.log10(Math.max(1,liq))*5+Math.min(25,spreadBps/4)))),buyPair:buy.pairAddress,sellPair:sell.pairAddress,source:'live-market'});
     }
   }
-  return out.sort((a,b)=>b.net-a.net).slice(0,100);
+  return out.sort((a,b)=>b.net-a.net).slice(0,250);
 }
-
-function deriveStats(markets,opps){
-  const dexSet=new Set(markets.map(m=>m.dexId));
-  const totalLiquidity=markets.reduce((s,m)=>s+m.liquidityUsd,0);
-  const totalVolume=markets.reduce((s,m)=>s+m.volume24h,0);
-  const positive=opps.filter(o=>o.net>0);
-  return {
-    markets:markets.length,dexes:dexSet.size,watchlist:WATCHLIST.length,
-    opportunities:opps.length,positive:positive.length,
-    estimatedNet:round(positive.reduce((s,o)=>s+o.net,0)),
-    totalLiquidity:round(totalLiquidity),totalVolume24h:round(totalVolume),
-    medianSpreadBps:opps.length?round([...opps].sort((a,b)=>a.spreadBps-b.spreadBps)[Math.floor(opps.length/2)].spreadBps,1):0,
-    lastUpdated:state.lastUpdated,source:state.source,executionMode:state.executionMode
-  };
-}
-
 async function scan(){
-  const started=Date.now();
-  try{
-    const results=await Promise.allSettled(WATCHLIST.map(fetchTokenPairs));
-    const markets=[];
-    results.forEach((r,i)=>{ if(r.status==='fulfilled') markets.push(...r.value); else state.errors.unshift({at:new Date().toISOString(),source:WATCHLIST[i].symbol,message:String(r.reason?.message||r.reason)}); });
-    state.markets=markets;
-    state.opportunities=makeOpportunities(markets);
-    state.lastUpdated=new Date().toISOString();
-    state.cycle++;
-    state.stats=deriveStats(markets,state.opportunities);
-    state.stats.scanMs=Date.now()-started;
-    state.errors=state.errors.slice(0,20);
-    emit('snapshot',{stats:state.stats,opportunities:state.opportunities.slice(0,30),markets:state.markets.slice(0,100)});
-  }catch(err){ state.errors.unshift({at:new Date().toISOString(),source:'scanner',message:String(err.message||err)}); }
+  const all=[];
+  for(const [symbol,mint] of watch){
+    try{ const d=await fetchJson(`https://api.dexscreener.com/latest/dex/tokens/${mint}`); const pairs=(d.pairs||[]).filter(p=>p.chainId==='solana').sort((a,b)=>(b.liquidity?.usd||0)-(a.liquidity?.usd||0)).slice(0,24); all.push(...pairs.map(p=>normalizePair(symbol,p))); }
+    catch(e){err(`market:${symbol}`,e)}
+  }
+  state.market=all; state.opportunities=buildOpportunities(all); state.lastScan=now(); state.scanCount++;
+  broadcast('snapshot',snapshot()); broadcast('opportunities',state.opportunities.slice(0,40));
 }
-
-async function fetchRecentHeliusTransactions(address){
-  if(!HELIUS_API_KEY) return [];
-  const url=`https://api.helius.xyz/v0/addresses/${address}/transactions?api-key=${HELIUS_API_KEY}&limit=20`;
-  return await fetchJson(url);
+function snapshot(){
+  const realized=state.arbitrages.reduce((s,x)=>s+(x.realizedNetUsd||0),0), est=state.opportunities.reduce((s,x)=>s+Math.max(0,x.net),0);
+  return {version:'3.0.0',mode:cfg.mode,indexer:state.indexer,lastScan:state.lastScan,marketCount:state.market.length,opportunityCount:state.opportunities.length,transactionCount:state.transactions.length,arbitrageCount:state.arbitrages.length,searcherCount:state.searchers.size,validatorCount:state.validators.size,estimatedNetUsd:+est.toFixed(2),realizedNetUsd:+realized.toFixed(2),uptimeSeconds:Math.floor((Date.now()-state.startedAt)/1000)};
 }
-
-
-function startHeliusStream(){
-  if(!HELIUS_API_KEY || !DEX_PROGRAM_IDS.length || typeof WebSocket==='undefined') return;
-  const endpoint=`wss://mainnet.helius-rpc.com/?api-key=${encodeURIComponent(HELIUS_API_KEY)}`;
-  let retry=1000;
+function parseHeliusTx(n){
+  const r=n?.params?.result; if(!r)return null; const tx=r.transaction||r; const sig=tx?.transaction?.signatures?.[0]||r.signature||uid('sig'); const msg=tx?.transaction?.message; const keys=(msg?.accountKeys||[]).map(k=>typeof k==='string'?k:(k.pubkey||String(k))); const meta=tx?.meta||r.meta||{}; const programs=new Set(); for(const ix of [...(msg?.instructions||[]),...(meta?.innerInstructions||[]).flatMap(x=>x.instructions||[])]){ const p=ix.programId||keys[ix.programIdIndex]; if(p)programs.add(p); }
+  return {id:sig,signature:sig,slot:r.slot||tx.slot||null,blockTime:r.blockTime||null,feePayer:keys[0]||null,feeLamports:Number(meta.fee||0),success:meta.err==null,programIds:[...programs],preBalances:meta.preBalances||[],postBalances:meta.postBalances||[],preTokenBalances:meta.preTokenBalances||[],postTokenBalances:meta.postTokenBalances||[],receivedAt:now()};
+}
+function analyzeTx(t){
+  const known=t.programIds.filter(p=>cfg.dexPrograms.includes(p)); if(known.length<2)return;
+  const solDelta=(Number(t.postBalances?.[0]||0)-Number(t.preBalances?.[0]||0))/1e9;
+  const realizedNetUsd=null; // requires exact token valuation/decoder; never fabricate.
+  const a={id:uid('arb'),signature:t.signature,slot:t.slot,searcher:t.feePayer,programIds:t.programIds,dexProgramCount:known.length,type:'multi-dex-candidate',confidence:55,solDelta,realizedNetUsd,status:'candidate',detectedAt:now()};
+  state.arbitrages.unshift(a); state.arbitrages=state.arbitrages.slice(0,5000);
+  if(t.feePayer){const s=state.searchers.get(t.feePayer)||{wallet:t.feePayer,transactions:0,candidates:0,realizedNetUsd:0,lastSeen:null};s.transactions++;s.candidates++;s.lastSeen=now();state.searchers.set(t.feePayer,s)}
+  broadcast('arbitrage',a);
+}
+function startHelius(){
+  if(!cfg.heliusKey||cfg.dexPrograms.length===0){state.indexer='disabled';return}
+  const url=`wss://atlas-mainnet.helius-rpc.com/?api-key=${cfg.heliusKey}`; let ws,retry=1000,ping;
   const connect=()=>{
-    const ws=new WebSocket(endpoint);
-    let ping;
-    ws.addEventListener('open',()=>{
-      retry=1000;
-      ws.send(JSON.stringify({jsonrpc:'2.0',id:1,method:'transactionSubscribe',params:[{failed:false,vote:false,accountInclude:DEX_PROGRAM_IDS},{commitment:'processed',encoding:'jsonParsed',transactionDetails:'full',showRewards:false,maxSupportedTransactionVersion:0}]}));
-      ping=setInterval(()=>{try{ws.send(JSON.stringify({jsonrpc:'2.0',id:99,method:'getHealth'}))}catch{}},60000);
-    });
-    ws.addEventListener('message',(event)=>{
-      try{
-        const msg=JSON.parse(String(event.data));
-        const result=msg?.params?.result;
-        if(!result) return;
-        const value=result.value||result;
-        const sig=value?.signature || value?.transaction?.signatures?.[0] || null;
-        const tx={signature:sig,slot:result.context?.slot||value.slot||null,receivedAt:new Date().toISOString(),programs:DEX_PROGRAM_IDS.filter(id=>JSON.stringify(value).includes(id)),raw:value};
-        state.transactions.unshift(tx); state.transactions=state.transactions.slice(0,500);
-        emit('transaction',{signature:tx.signature,slot:tx.slot,receivedAt:tx.receivedAt,programs:tx.programs});
-      }catch{}
-    });
-    const reconnect=()=>{clearInterval(ping);setTimeout(connect,retry);retry=Math.min(30000,retry*2)};
-    ws.addEventListener('close',reconnect); ws.addEventListener('error',()=>{try{ws.close()}catch{}});
-  };
-  connect();
+    state.indexer='connecting'; ws=new WebSocket(url);
+    ws.on('open',()=>{state.indexer='streaming';retry=1000; ws.send(JSON.stringify({jsonrpc:'2.0',id:1,method:'transactionSubscribe',params:[{failed:false,accountInclude:cfg.dexPrograms},{commitment:'confirmed',encoding:'jsonParsed',transactionDetails:'full',showRewards:false,maxSupportedTransactionVersion:0}]})); ping=setInterval(()=>{if(ws.readyState===1)ws.ping()},20000)});
+    ws.on('message',b=>{try{const t=parseHeliusTx(JSON.parse(String(b)));if(!t)return;state.transactions.unshift(t);state.transactions=state.transactions.slice(0,10000);analyzeTx(t);broadcast('transaction',t)}catch(e){err('helius-message',e)}});
+    ws.on('error',e=>err('helius',e)); ws.on('close',()=>{state.indexer='reconnecting';clearInterval(ping);setTimeout(connect,retry);retry=Math.min(30000,retry*2)});
+  }; connect();
 }
-const server=http.createServer(async(req,res)=>{
-  const url=new URL(req.url,`http://${req.headers.host||'localhost'}`);
-  if(req.method==='OPTIONS'){res.writeHead(204,corsHeaders()); return res.end();}
-  if(url.pathname==='/health') return send(res,200,{ok:true,service:'tradebothub-mev-live',lastUpdated:state.lastUpdated,cycle:state.cycle,uptime:process.uptime()});
-  if(url.pathname==='/api/config') return send(res,200,{executionMode:state.executionMode,watchlist:WATCHLIST,heliusConfigured:Boolean(HELIUS_API_KEY),dexProgramsConfigured:DEX_PROGRAM_IDS.length,pollIntervalMs:POLL_INTERVAL_MS,minSpreadBps:MIN_SPREAD_BPS});
-  if(url.pathname==='/api/stats') return send(res,200,state.stats);
-  if(url.pathname==='/api/markets') return send(res,200,{updatedAt:state.lastUpdated,data:state.markets});
-  if(url.pathname==='/api/opportunities') return send(res,200,{updatedAt:state.lastUpdated,data:state.opportunities,warning:'These are observed price discrepancies, not guaranteed executable profits.'});
-  if(url.pathname==='/api/errors') return send(res,200,{data:state.errors});
-  if(url.pathname==='/api/transactions') return send(res,200,{configured:Boolean(HELIUS_API_KEY&&DEX_PROGRAM_IDS.length),data:state.transactions.map(({raw,...x})=>x)});
-  if(url.pathname==='/api/events'){
-    res.writeHead(200,corsHeaders({'content-type':'text/event-stream','connection':'keep-alive','x-accel-buffering':'no'}));
-    res.write(`event: snapshot\ndata: ${JSON.stringify({stats:state.stats,opportunities:state.opportunities.slice(0,30),markets:state.markets.slice(0,100)})}\n\n`);
-    const ping=setInterval(()=>{try{res.write(`event: ping\ndata: ${Date.now()}\n\n`)}catch{}},25000);
-    clients.add(res); req.on('close',()=>{clearInterval(ping);clients.delete(res)}); return;
-  }
-  if(url.pathname==='/api/helius/address' && req.method==='GET'){
-    const address=url.searchParams.get('address'); if(!address) return send(res,400,{error:'address is required'});
-    if(!HELIUS_API_KEY) return send(res,503,{error:'HELIUS_API_KEY is not configured'});
-    try{return send(res,200,{data:await fetchRecentHeliusTransactions(address)});}catch(e){return send(res,502,{error:String(e.message||e)});}
-  }
-  if(url.pathname==='/api/scan' && req.method==='POST'){ await scan(); return send(res,200,{ok:true,stats:state.stats}); }
-  return send(res,404,{error:'Not found'});
-});
 
-server.listen(PORT,()=>console.log(`TradeBotHub MEV live API listening on :${PORT}`));
-scan(); setInterval(scan,POLL_INTERVAL_MS).unref(); startHeliusStream();
+function send(res,status,body,headers={}){res.writeHead(status,{'content-type':'application/json; charset=utf-8','access-control-allow-origin':cfg.cors==='*'?'*':cfg.cors,...headers});res.end(JSON.stringify(body))}
+async function readBody(req){let raw='';for await(const c of req){raw+=c;if(raw.length>1_000_000)throw new Error('Body too large')}return raw?JSON.parse(raw):{}}
+const server=http.createServer(async(req,res)=>{
+  try{
+    if(req.method==='OPTIONS'){res.writeHead(204,{'access-control-allow-origin':cfg.cors==='*'?'*':cfg.cors,'access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type'});return res.end()}
+    const u=new URL(req.url,`http://${req.headers.host||'localhost'}`);req.query=Object.fromEntries(u.searchParams.entries());
+    if(req.method==='GET'&&u.pathname==='/health')return send(res,200,{ok:true,...snapshot()});
+    if(req.method==='GET'&&u.pathname==='/api/stats')return send(res,200,snapshot());
+    if(req.method==='GET'&&u.pathname==='/api/market')return send(res,200,page(state.market,req));
+    if(req.method==='GET'&&u.pathname==='/api/opportunities')return send(res,200,page(state.opportunities,req));
+    if(req.method==='GET'&&u.pathname==='/api/transactions')return send(res,200,page(state.transactions,req));
+    if(req.method==='GET'&&u.pathname==='/api/arbitrages')return send(res,200,page(state.arbitrages,req));
+    if(req.method==='GET'&&u.pathname==='/api/searchers')return send(res,200,page([...state.searchers.values()].sort((a,b)=>b.candidates-a.candidates),req));
+    if(req.method==='GET'&&u.pathname==='/api/validators')return send(res,200,page([...state.validators.values()],req));
+    if(req.method==='GET'&&u.pathname==='/api/errors')return send(res,200,page(state.errors,req));
+    if(req.method==='POST'&&u.pathname==='/api/admin/scan'){await scan();return send(res,200,{ok:true,...snapshot()})}
+    if(req.method==='POST'&&u.pathname==='/api/simulate'){const body=await readBody(req);const {capital=10000,spreadBps=20,costBps=cfg.costBps,minProfit=0}=body;const gross=Number(capital)*Number(spreadBps)/10000,costs=Number(capital)*Number(costBps)/10000,net=gross-costs;return send(res,200,{mode:'paper',status:net>=Number(minProfit)?'passed':'rejected',capital:+Number(capital).toFixed(2),gross:+gross.toFixed(2),costs:+costs.toFixed(2),net:+net.toFixed(2),warning:'Simulation is an estimate, not a signed or landed transaction.'})}
+    if(req.method==='GET'&&u.pathname==='/api/stream'){res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive','access-control-allow-origin':'*'});res.write(`event: snapshot\ndata: ${JSON.stringify(snapshot())}\n\n`);state.clients.add(res);const t=setInterval(()=>res.write(`event: ping\ndata: ${Date.now()}\n\n`),15000);req.on('close',()=>{clearInterval(t);state.clients.delete(res)});return}
+    return send(res,404,{error:'Not found'});
+  }catch(e){err('http',e);return send(res,500,{error:'Internal server error',message:String(e?.message||e)})}
+});
+server.listen(cfg.port,()=>console.log(`TradeBotHub MEV v3 listening on ${cfg.port}`));
+scan().catch(e=>err('initial-scan',e)); setInterval(()=>scan().catch(e=>err('scan',e)),cfg.pollMs).unref(); startHelius();
