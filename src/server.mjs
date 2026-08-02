@@ -65,6 +65,11 @@ const CONFIG = {
   liveTradingEnabled: envBool('LIVE_TRADING_ENABLED', false),
   pollIntervalMs: envNumber('POLL_INTERVAL_MS', 15000),
   minSpreadBps: envNumber('MIN_SPREAD_BPS', 15),
+  maxSpreadBps: envNumber('MAX_SPREAD_BPS', 1200),
+  minPairLiquidityUsd: envNumber('MIN_PAIR_LIQUIDITY_USD', 50000),
+  minOpportunityCapitalUsd: envNumber('MIN_OPPORTUNITY_CAPITAL_USD', 250),
+  maxPairsPerToken: envNumber('MAX_PAIRS_PER_TOKEN', 8),
+  maxMedianDeviationBps: envNumber('MAX_MEDIAN_DEVIATION_BPS', 1500),
   defaultCapitalUsd: envNumber('DEFAULT_CAPITAL_USD', 10000),
   estimatedCostBps: envNumber('ESTIMATED_COST_BPS', 12),
   solanaRpcUrl:
@@ -86,6 +91,8 @@ const CONFIG = {
   simulateOnly: envBool('SIMULATE_ONLY', false),
   indexerLookbackLimit: envNumber('INDEXER_LOOKBACK_LIMIT', 100),
 };
+
+const SCANNER_TOKENS = DEFAULT_TOKENS.filter((token) => token.symbol !== 'USDC');
 
 const state = {
   market: [],
@@ -317,6 +324,7 @@ function executionReadinessSync() {
     mode: CONFIG.executionMode,
     liveTradingEnabled: CONFIG.liveTradingEnabled,
     canExecuteLive: reasons.length === 0,
+    walletExecutionSupported: true,
     reasons,
     signerConfigured: signer.configured,
     signerPublicKey: signer.publicKey,
@@ -444,6 +452,25 @@ function normalizePair(token, pair) {
   };
 }
 
+function median(values) {
+  if (!values.length) {
+    return 0;
+  }
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[middle - 1] + sorted[middle]) / 2;
+  }
+  return sorted[middle];
+}
+
+function deviationBps(value, baseline) {
+  if (!Number.isFinite(value) || !Number.isFinite(baseline) || baseline <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.abs(value - baseline) / baseline * 10000;
+}
+
 function deriveOpportunities(market) {
   const grouped = new Map();
   for (const item of market) {
@@ -457,42 +484,79 @@ function deriveOpportunities(market) {
     if (items.length < 2) {
       continue;
     }
-    const sorted = [...items].sort((a, b) => a.priceUsd - b.priceUsd);
-    const buy = sorted[0];
-    const sell = sorted[sorted.length - 1];
-    if (!buy || !sell || buy.dex === sell.dex) {
+
+    const liquidItems = items
+      .filter((item) => item.liquidity >= CONFIG.minPairLiquidityUsd)
+      .sort((a, b) => b.liquidity - a.liquidity)
+      .slice(0, CONFIG.maxPairsPerToken);
+
+    if (liquidItems.length < 2) {
       continue;
     }
-    const spreadBps = ((sell.priceUsd - buy.priceUsd) / buy.priceUsd) * 10000;
-    if (!Number.isFinite(spreadBps) || spreadBps < CONFIG.minSpreadBps) {
-      continue;
-    }
-    const capital = Math.min(
-      CONFIG.defaultCapitalUsd,
-      buy.liquidity * 0.02,
-      sell.liquidity * 0.02,
+
+    const baselinePriceUsd = median(liquidItems.map((item) => item.priceUsd));
+    const normalizedItems = liquidItems.filter(
+      (item) =>
+        deviationBps(item.priceUsd, baselinePriceUsd) <=
+        CONFIG.maxMedianDeviationBps,
     );
-    const gross = capital * (spreadBps / 10000);
-    const costs = capital * (CONFIG.estimatedCostBps / 10000);
-    const net = gross - costs;
-    opportunities.push({
-      id: crypto.randomUUID(),
-      detectedAt: nowIso(),
-      symbol,
-      tokenMint: buy.tokenMint,
-      buyDex: buy.dex,
-      sellDex: sell.dex,
-      buyPriceUsd: round6(buy.priceUsd),
-      sellPriceUsd: round6(sell.priceUsd),
-      spreadBps: round2(spreadBps),
-      capital: round2(capital),
-      gross: round2(gross),
-      costs: round2(costs),
-      net: round2(net),
-      score: Math.max(1, Math.round(spreadBps - CONFIG.estimatedCostBps)),
-      status: net > 0 ? 'candidate' : 'watch',
-      routePreview: [buy.dex, sell.dex],
-    });
+
+    if (normalizedItems.length < 2) {
+      continue;
+    }
+
+    for (let i = 0; i < normalizedItems.length; i += 1) {
+      for (let j = i + 1; j < normalizedItems.length; j += 1) {
+        const first = normalizedItems[i];
+        const second = normalizedItems[j];
+        if (first.dex === second.dex) {
+          continue;
+        }
+
+        const buy = first.priceUsd <= second.priceUsd ? first : second;
+        const sell = first.priceUsd <= second.priceUsd ? second : first;
+        const spreadBps = ((sell.priceUsd - buy.priceUsd) / buy.priceUsd) * 10000;
+        if (
+          !Number.isFinite(spreadBps) ||
+          spreadBps < CONFIG.minSpreadBps ||
+          spreadBps > CONFIG.maxSpreadBps
+        ) {
+          continue;
+        }
+
+        const capital = Math.min(
+          CONFIG.defaultCapitalUsd,
+          buy.liquidity * 0.01,
+          sell.liquidity * 0.01,
+        );
+        if (capital < CONFIG.minOpportunityCapitalUsd) {
+          continue;
+        }
+
+        const gross = capital * (spreadBps / 10000);
+        const costs = capital * (CONFIG.estimatedCostBps / 10000);
+        const net = gross - costs;
+        opportunities.push({
+          id: crypto.randomUUID(),
+          detectedAt: nowIso(),
+          symbol,
+          tokenMint: buy.tokenMint,
+          buyDex: buy.dex,
+          sellDex: sell.dex,
+          buyPriceUsd: round6(buy.priceUsd),
+          sellPriceUsd: round6(sell.priceUsd),
+          spreadBps: round2(spreadBps),
+          capital: round2(capital),
+          gross: round2(gross),
+          costs: round2(costs),
+          net: round2(net),
+          score: Math.max(1, Math.round(spreadBps - CONFIG.estimatedCostBps)),
+          status: net > 0 ? 'candidate' : 'watch',
+          routePreview: [buy.dex, sell.dex],
+          marketBaselineUsd: round6(baselinePriceUsd),
+        });
+      }
+    }
   }
 
   return opportunities.sort((a, b) => b.net - a.net).slice(0, 150);
@@ -539,7 +603,7 @@ function rebuildActivityViews() {
 
 async function scanMarket() {
   try {
-    const results = await Promise.all(DEFAULT_TOKENS.map((token) => fetchTokenPairs(token)));
+    const results = await Promise.all(SCANNER_TOKENS.map((token) => fetchTokenPairs(token)));
     state.market = results.flat().sort((a, b) => b.liquidity - a.liquidity).slice(0, 250);
     state.opportunities = deriveOpportunities(state.market);
     state.lastScanAt = nowIso();
@@ -845,6 +909,62 @@ async function handleExecutionQuote(res, body) {
   });
 }
 
+async function handleExecutionBuild(res, body) {
+  const walletPublicKey = String(body.userPublicKey || body.walletPublicKey || '').trim();
+  if (!walletPublicKey) {
+    sendJson(res, 400, {
+      ok: false,
+      error: 'userPublicKey is required to build a wallet transaction',
+    });
+    return;
+  }
+
+  const context = await buildExecutionContext(body);
+  const swapUsdValue = Number(context.quote.swapUsdValue || 0);
+  if (swapUsdValue > CONFIG.maxExecutionUsd) {
+    sendJson(res, 400, {
+      ok: false,
+      error: `Swap size exceeds MAX_EXECUTION_USD (${CONFIG.maxExecutionUsd})`,
+      swapUsdValue: round2(swapUsdValue),
+    });
+    return;
+  }
+
+  const swapResponse = await buildSwapTransaction(context.quote, walletPublicKey);
+  sendJson(res, 200, {
+    ok: true,
+    mode: 'wallet',
+    walletExecutionSupported: true,
+    inputToken: context.inputToken,
+    outputToken: context.outputToken,
+    amountIn: context.amount,
+    amountOutQuoted: rawToHuman(
+      context.quote.outAmount,
+      context.outputToken.decimals,
+    ),
+    amountOutMin: rawToHuman(
+      context.quote.otherAmountThreshold,
+      context.outputToken.decimals,
+    ),
+    swapUsdValue: round2(Number(context.quote.swapUsdValue || 0)),
+    priceImpactPct: Number(context.quote.priceImpactPct || 0),
+    slippageBps: context.slippageBps,
+    routePlan: (context.quote.routePlan || []).map((item) => ({
+      label: item.swapInfo?.label,
+      inputMint: item.swapInfo?.inputMint,
+      outputMint: item.swapInfo?.outputMint,
+      percent: item.percent,
+      bps: item.bps,
+    })),
+    swapBuild: {
+      swapTransaction: swapResponse.swapTransaction,
+      lastValidBlockHeight: swapResponse.lastValidBlockHeight,
+      prioritizationFeeLamports: swapResponse.prioritizationFeeLamports,
+      computeUnitLimit: swapResponse.computeUnitLimit,
+    },
+  });
+}
+
 async function handleExecutionExecute(res, body) {
   const readiness = await executionReadiness();
   if (!readiness.canExecuteLive) {
@@ -1034,6 +1154,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/execution/quote') {
       const body = await readBody(req);
       await handleExecutionQuote(res, body);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/execution/build') {
+      const body = await readBody(req);
+      await handleExecutionBuild(res, body);
       return;
     }
 
