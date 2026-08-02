@@ -51,6 +51,7 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - `GET /api/execution/status`
 - `GET /api/executions`
 - `POST /api/execution/quote`
+- `POST /api/execution/build`
 - `POST /api/execution/execute`
 - `POST /api/simulate`
 
@@ -59,3 +60,15 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - The API does not infer realized arbitrage profit from rough route estimates.
 - A successful quote is not a profit guarantee.
 - Live execution stays blocked until mode, flags, signer, and broadcast prerequisites are all satisfied.
+- Wallet-connected execution is the recommended path when you want the browser frontend to sign locally instead of storing a private key in Render.
+
+## Scanner tuning
+
+- `MIN_SPREAD_BPS`
+- `MAX_SPREAD_BPS`
+- `MIN_PAIR_LIQUIDITY_USD`
+- `MIN_OPPORTUNITY_CAPITAL_USD`
+- `MAX_PAIRS_PER_TOKEN`
+- `MAX_MEDIAN_DEVIATION_BPS`
+
+These filters are used to reject low-liquidity and outlier markets so the opportunity board shows more realistic spreads instead of impossible stablecoin anomalies.
