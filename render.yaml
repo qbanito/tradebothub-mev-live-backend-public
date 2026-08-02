@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: tradebothub-mev-live-api
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: POLL_INTERVAL_MS
+        value: "15000"
+      - key: MIN_SPREAD_BPS
+        value: "20"
+      - key: EXECUTION_MODE
+        value: paper
