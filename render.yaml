@@ -6,14 +6,19 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: NODE_VERSION
-        value: 20
-      - key: CORS_ORIGIN
-        value: "*"
-      - key: POLL_INTERVAL_MS
-        value: "15000"
-      - key: MIN_SPREAD_BPS
-        value: "20"
+        value: 22
       - key: EXECUTION_MODE
         value: paper
+      - key: CORS_ORIGIN
+        sync: false
+      - key: HELIUS_API_KEY
+        sync: false
+      - key: POLL_INTERVAL_MS
+        value: 15000
+      - key: MIN_SPREAD_BPS
+        value: 15
+      - key: DEFAULT_CAPITAL_USD
+        value: 10000
