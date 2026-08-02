@@ -1,6 +1,6 @@
-# TradeBotHub MEV Backend v3.2
+# TradeBotHub MEV Backend v3.4
 
-Production-oriented market intelligence backend with a multi-chain scanner and guarded Solana execution support. It exposes market snapshots, cross-DEX opportunity estimates, SSE streaming, paper simulation, Jupiter swap quoting, signer readiness, and optional live swap execution.
+Production-oriented market intelligence backend with a multi-chain scanner, guarded Solana execution support, demo execution validation, and a persistent trade ledger. It exposes market snapshots, cross-DEX opportunity estimates, SSE streaming, paper simulation, Jupiter swap quoting, signer readiness, wallet execution reporting, and optional live swap execution.
 
 ## Deploy on Render
 
@@ -12,6 +12,14 @@ Use `render.yaml`, or configure the service manually:
 - Runtime: Node 22
 
 Set `CORS_ORIGIN` to your Netlify URL before going live.
+
+## What's new in v3.4
+
+- Demo execution endpoint for validating the best ready opportunity with live Jupiter quotes.
+- Trade ledger endpoint with realized and quoted PnL tracking.
+- Risk status endpoint with cooldowns, exposure, daily loss, and kill switch state.
+- Wallet execution reporting so browser-signed transactions feed back into backend analytics.
+- Frontend-ready controls for demo mode and kill switch management.
 
 ## Execution modes
 
@@ -35,6 +43,18 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - `MAX_EXECUTION_USD`
 - `MAX_PRIORITY_FEE_LAMPORTS`
 - `SENDER_TIP_LAMPORTS`
+- `DEMO_EXECUTION_ENABLED`
+- `GUARDRAIL_KILL_SWITCH`
+- `EXECUTION_COOLDOWN_MS`
+- `MAX_DAILY_LOSS_USD`
+- `MAX_CONSECUTIVE_FAILURES`
+- `MAX_TOKEN_EXPOSURE_USD`
+- `MAX_PRICE_IMPACT_PCT`
+- `MIN_QUOTE_OUT_USD`
+- `TRADE_LEDGER_MAX_ENTRIES`
+- `TRADE_LEDGER_PATH`
+- `EXECUTION_BLACKLIST_ASSETS`
+- `EXECUTION_BLACKLIST_DEXES`
 - `SKIP_PREFLIGHT`
 
 ## Main endpoints
@@ -50,18 +70,25 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - `GET /api/tokens`
 - `GET /api/execution/status`
 - `GET /api/executions`
+- `GET /api/trade-ledger`
+- `GET /api/risk/status`
 - `POST /api/execution/quote`
 - `POST /api/execution/build`
 - `POST /api/execution/execute`
+- `POST /api/opportunities/demo-execute`
+- `POST /api/execution/report`
+- `POST /api/risk/kill-switch`
 - `POST /api/simulate`
 
 ## Safety notes
 
 - The API does not infer realized arbitrage profit from rough route estimates.
 - A successful quote is not a profit guarantee.
+- Demo execution uses live quote validation and records a simulated realized result. It is not an on-chain fill.
 - Live execution stays blocked until mode, flags, signer, and broadcast prerequisites are all satisfied.
 - Wallet-connected execution is the recommended path when you want the browser frontend to sign locally instead of storing a private key in Render.
 - Multi-chain opportunities are discovery-only unless you add a real executor for that chain. The built-in executor flow remains Solana-focused.
+- If `TRADE_LEDGER_PATH` points to `/tmp`, the ledger is runtime-local and can be lost after restart or redeploy.
 
 ## Scanner tuning
 

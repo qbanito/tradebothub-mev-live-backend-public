@@ -40,6 +40,30 @@ services:
         value: 1000000
       - key: SENDER_TIP_LAMPORTS
         value: 5000
+      - key: DEMO_EXECUTION_ENABLED
+        value: true
+      - key: GUARDRAIL_KILL_SWITCH
+        value: false
+      - key: EXECUTION_COOLDOWN_MS
+        value: 30000
+      - key: MAX_DAILY_LOSS_USD
+        value: 250
+      - key: MAX_CONSECUTIVE_FAILURES
+        value: 5
+      - key: MAX_TOKEN_EXPOSURE_USD
+        value: 1000
+      - key: MAX_PRICE_IMPACT_PCT
+        value: 1.5
+      - key: MIN_QUOTE_OUT_USD
+        value: 25
+      - key: TRADE_LEDGER_MAX_ENTRIES
+        value: 500
+      - key: TRADE_LEDGER_PATH
+        value: /tmp/tradebothub-mev-runtime.json
+      - key: EXECUTION_BLACKLIST_ASSETS
+        sync: false
+      - key: EXECUTION_BLACKLIST_DEXES
+        sync: false
       - key: SKIP_PREFLIGHT
         value: false
       - key: POLL_INTERVAL_MS

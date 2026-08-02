@@ -1,5 +1,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { URL } from 'node:url';
 import {
   Connection,
@@ -12,7 +14,7 @@ import {
 } from '@solana/web3.js';
 import bs58 from 'bs58';
 
-const VERSION = '3.3.0';
+const VERSION = '3.4.0';
 const TIP_ACCOUNTS = [
   '4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE',
   'D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ',
@@ -319,6 +321,19 @@ const CONFIG = {
   senderTipLamports: envNumber('SENDER_TIP_LAMPORTS', 5000),
   skipPreflight: envBool('SKIP_PREFLIGHT', false),
   simulateOnly: envBool('SIMULATE_ONLY', false),
+  demoExecutionEnabled: envBool('DEMO_EXECUTION_ENABLED', true),
+  guardrailKillSwitch: envBool('GUARDRAIL_KILL_SWITCH', false),
+  executionCooldownMs: envNumber('EXECUTION_COOLDOWN_MS', 30000),
+  maxDailyLossUsd: envNumber('MAX_DAILY_LOSS_USD', 250),
+  maxConsecutiveFailures: envNumber('MAX_CONSECUTIVE_FAILURES', 3),
+  maxTokenExposureUsd: envNumber('MAX_TOKEN_EXPOSURE_USD', 2000),
+  maxPriceImpactPct: envNumber('MAX_PRICE_IMPACT_PCT', 5),
+  minQuoteOutUsd: envNumber('MIN_QUOTE_OUT_USD', 20),
+  tradeLedgerMaxEntries: envNumber('TRADE_LEDGER_MAX_ENTRIES', 500),
+  tradeLedgerPath:
+    process.env.TRADE_LEDGER_PATH || '/tmp/tradebothub-mev-runtime.json',
+  executionBlacklistAssets: csv(process.env.EXECUTION_BLACKLIST_ASSETS || ''),
+  executionBlacklistDexes: csv(process.env.EXECUTION_BLACKLIST_DEXES || ''),
   indexerLookbackLimit: envNumber('INDEXER_LOOKBACK_LIMIT', 100),
 };
 
@@ -504,10 +519,20 @@ const state = {
   arbitrages: [],
   searchers: [],
   executions: [],
+  tradeLedger: [],
   errors: [],
   lastScanAt: null,
   lastExecutionAt: null,
   lastErrorAt: null,
+  risk: {
+    killSwitch: CONFIG.guardrailKillSwitch,
+    killSwitchReason: CONFIG.guardrailKillSwitch
+      ? 'Enabled from environment'
+      : null,
+    assetBlacklist: [...CONFIG.executionBlacklistAssets],
+    dexBlacklist: [...CONFIG.executionBlacklistDexes],
+    lastAttemptByKey: {},
+  },
   indexer: {
     status: CONFIG.heliusApiKey ? 'configured' : 'disabled',
     source: CONFIG.heliusApiKey ? 'manual-ingest' : 'off',
@@ -554,6 +579,10 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function todayKey(value = nowIso()) {
+  return String(value).slice(0, 10);
+}
+
 function logError(message, detail = null) {
   state.lastErrorAt = nowIso();
   const item = {
@@ -570,6 +599,199 @@ function logError(message, detail = null) {
   state.errors.unshift(item);
   state.errors = state.errors.slice(0, 50);
   console.error(`[${item.at}] ${message}`, detail || '');
+}
+
+async function loadRuntimeState() {
+  try {
+    const raw = await fs.readFile(CONFIG.tradeLedgerPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    state.tradeLedger = Array.isArray(parsed.tradeLedger) ? parsed.tradeLedger : [];
+    state.risk = {
+      ...state.risk,
+      ...(parsed.risk || {}),
+      assetBlacklist: Array.isArray(parsed.risk?.assetBlacklist)
+        ? parsed.risk.assetBlacklist
+        : state.risk.assetBlacklist,
+      dexBlacklist: Array.isArray(parsed.risk?.dexBlacklist)
+        ? parsed.risk.dexBlacklist
+        : state.risk.dexBlacklist,
+      lastAttemptByKey:
+        parsed.risk && typeof parsed.risk.lastAttemptByKey === 'object'
+          ? parsed.risk.lastAttemptByKey
+          : {},
+    };
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      logError('Runtime state load failed', error);
+    }
+  }
+}
+
+async function persistRuntimeState() {
+  try {
+    await fs.mkdir(path.dirname(CONFIG.tradeLedgerPath), { recursive: true });
+    await fs.writeFile(
+      CONFIG.tradeLedgerPath,
+      JSON.stringify(
+        {
+          tradeLedger: state.tradeLedger,
+          risk: state.risk,
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+  } catch (error) {
+    logError('Runtime state persist failed', error);
+  }
+}
+
+function isStableSymbol(symbol) {
+  return ['USDC', 'USDT', 'DAI', 'USD'].includes(String(symbol || '').toUpperCase());
+}
+
+function sumRealizedNetUsd(entries) {
+  return round2(
+    entries.reduce((sum, item) => sum + Number(item.realizedNetUsd || 0), 0),
+  );
+}
+
+function stableUsdValueFromAmount(amount, symbol) {
+  return isStableSymbol(symbol) ? round2(Number(amount || 0)) : null;
+}
+
+function recordAttemptCooldown(key, at = nowIso()) {
+  state.risk.lastAttemptByKey[key] = at;
+}
+
+function recentAttemptsForToday() {
+  const key = todayKey();
+  return state.tradeLedger.filter((item) => item.dayKey === key);
+}
+
+function consecutiveFailureCount(entries = state.tradeLedger) {
+  let count = 0;
+  for (const item of entries) {
+    const failed = !item.success || ['rejected', 'failed', 'quote-failed'].includes(item.status);
+    if (!failed) {
+      break;
+    }
+    count += 1;
+  }
+  return count;
+}
+
+function tokenExposureMap(entries = recentAttemptsForToday()) {
+  const map = {};
+  for (const item of entries) {
+    if (!item.assetSymbol) {
+      continue;
+    }
+    map[item.assetSymbol] = round2((map[item.assetSymbol] || 0) + Number(item.notionalUsd || 0));
+  }
+  return map;
+}
+
+function computeRiskSummary() {
+  const todayEntries = recentAttemptsForToday();
+  const dailyRealizedNetUsd = sumRealizedNetUsd(todayEntries);
+  const dailyLossUsd = round2(Math.max(0, -dailyRealizedNetUsd));
+  const consecutiveFailures = consecutiveFailureCount();
+  const exposureByAsset = tokenExposureMap(todayEntries);
+  const activeCooldowns = Object.entries(state.risk.lastAttemptByKey || {})
+    .map(([key, value]) => {
+      const remainingMs =
+        CONFIG.executionCooldownMs - (Date.now() - new Date(value).getTime());
+      return {
+        key,
+        remainingMs: Math.max(0, remainingMs),
+      };
+    })
+    .filter((item) => item.remainingMs > 0)
+    .sort((a, b) => b.remainingMs - a.remainingMs);
+
+  return {
+    killSwitch: Boolean(state.risk.killSwitch),
+    killSwitchReason: state.risk.killSwitchReason,
+    blacklist: {
+      assets: [...state.risk.assetBlacklist],
+      dexes: [...state.risk.dexBlacklist],
+    },
+    limits: {
+      cooldownMs: CONFIG.executionCooldownMs,
+      maxDailyLossUsd: CONFIG.maxDailyLossUsd,
+      maxConsecutiveFailures: CONFIG.maxConsecutiveFailures,
+      maxTokenExposureUsd: CONFIG.maxTokenExposureUsd,
+      maxExecutionUsd: CONFIG.maxExecutionUsd,
+      maxPriceImpactPct: CONFIG.maxPriceImpactPct,
+      minQuoteOutUsd: CONFIG.minQuoteOutUsd,
+    },
+    counters: {
+      totalLedgerEntries: state.tradeLedger.length,
+      todayEntries: todayEntries.length,
+      dailyRealizedNetUsd,
+      dailyLossUsd,
+      consecutiveFailures,
+    },
+    exposureByAsset,
+    activeCooldowns,
+  };
+}
+
+function appendTradeLedger(entry) {
+  const normalized = {
+    id: crypto.randomUUID(),
+    createdAt: nowIso(),
+    dayKey: todayKey(),
+    ...entry,
+  };
+  state.tradeLedger.unshift(normalized);
+  state.tradeLedger = state.tradeLedger.slice(0, CONFIG.tradeLedgerMaxEntries);
+  void persistRuntimeState();
+  broadcastSnapshot();
+  return normalized;
+}
+
+function markExecutionView(entry) {
+  const executionView = {
+    id: entry.id,
+    createdAt: entry.createdAt,
+    signature: entry.signature || `demo-${entry.id.slice(0, 8)}`,
+    slot: entry.slot ?? null,
+    status: entry.status,
+    inputSymbol: entry.inputSymbol,
+    outputSymbol: entry.outputSymbol,
+    broadcastMode: entry.mode,
+    routePlan: Array.isArray(entry.routePlan)
+      ? entry.routePlan.map((item) => ({
+          label: item.label,
+          ammKey: item.ammKey || item.label,
+          percent: item.percent,
+          bps: item.bps,
+        }))
+      : [],
+  };
+  state.executions.unshift(executionView);
+  state.executions = state.executions.slice(0, 100);
+}
+
+function markTradeTransaction(entry) {
+  if (!entry.signature) {
+    return;
+  }
+  state.transactions.unshift({
+    slot: entry.slot ?? null,
+    signature: entry.signature,
+    feePayer: entry.walletPublicKey || entry.feePayer || null,
+    programIds: Array.isArray(entry.routePlan)
+      ? entry.routePlan.map((item) => item.ammKey || item.label).filter(Boolean)
+      : [],
+    feeLamports: entry.feeLamports || 0,
+    success: Boolean(entry.success),
+    detectedAt: entry.createdAt,
+  });
+  state.transactions = state.transactions.slice(0, 100);
 }
 
 function sendJson(res, status, payload) {
@@ -616,6 +838,7 @@ async function readBody(req) {
 function getStats() {
   const signer = getSignerInfo();
   const readiness = executionReadinessSync();
+  const risk = computeRiskSummary();
   const activeChains = [...new Set(state.market.map((item) => item.chainId).filter(Boolean))];
   const highQualityCount = state.opportunities.filter((item) =>
     ['A', 'B'].includes(item.qualityTier),
@@ -644,7 +867,9 @@ function getStats() {
     estimatedNetUsd: round2(
       state.opportunities.reduce((sum, item) => sum + Number(item.net || 0), 0),
     ),
-    realizedNetUsd: 0,
+    realizedNetUsd: risk.counters.dailyRealizedNetUsd,
+    dailyLossUsd: risk.counters.dailyLossUsd,
+    tradeLedgerCount: state.tradeLedger.length,
     lastScanAt: state.lastScanAt,
     lastExecutionAt: state.lastExecutionAt,
     indexer: `${state.indexer.status}:${state.indexer.source}`,
@@ -764,6 +989,7 @@ function executionReadinessSync() {
     scannerChains: [...SCANNER_CHAIN_IDS],
     executors: listExecutorCapabilities(canExecuteLive),
     strategies: listStrategyCapabilities(),
+    risk: computeRiskSummary(),
   };
 }
 
@@ -1314,6 +1540,7 @@ async function broadcastSwap({
   inputToken,
   outputToken,
   uiAmount,
+  opportunity = null,
 }) {
   const signer = getSignerInfo();
   if (!signer.keypair) {
@@ -1409,21 +1636,49 @@ async function broadcastSwap({
     broadcastMode: CONFIG.txBroadcastMode,
   };
 
-  state.executions.unshift(execution);
-  state.executions = state.executions.slice(0, 100);
-  state.transactions.unshift({
-    slot,
-    signature,
-    feePayer: signer.publicKey,
-    programIds: execution.routePlan.map((item) => item.ammKey).filter(Boolean),
+  const entry = appendTradeLedger({
+    type: 'server-live',
+    mode: 'server-live',
+    status: execution.status,
+    success: execution.success,
+    signature: execution.signature,
+    slot: execution.slot,
+    walletPublicKey: signer.publicKey,
+    opportunityId: opportunity?.id || null,
+    assetSymbol: outputToken.symbol,
+    inputSymbol: inputToken.symbol,
+    outputSymbol: outputToken.symbol,
+    inputMint: inputToken.mint,
+    outputMint: outputToken.mint,
+    amountIn: String(uiAmount),
+    quotedOutAmount: execution.amountOutQuoted,
+    actualOutAmount: execution.amountOutQuoted,
+    quotedNotionalUsd: execution.quotedOutUsd,
+    notionalUsd: execution.quotedOutUsd,
+    realizedNetUsd: stableUsdValueFromAmount(execution.amountOutQuoted, outputToken.symbol),
     feeLamports: execution.feeLamports,
-    success: true,
-    detectedAt: execution.createdAt,
+    routePlan: execution.routePlan,
+    priceImpactPct: execution.priceImpactPct,
   });
-  state.transactions = state.transactions.slice(0, 100);
+  markExecutionView({
+    ...entry,
+    signature: execution.signature,
+    slot: execution.slot,
+    inputSymbol: execution.inputSymbol,
+    outputSymbol: execution.outputSymbol,
+    routePlan: execution.routePlan,
+  });
+  markTradeTransaction({
+    ...entry,
+    signature: execution.signature,
+    slot: execution.slot,
+    feeLamports: execution.feeLamports,
+    walletPublicKey: signer.publicKey,
+    routePlan: execution.routePlan,
+    success: true,
+  });
   state.lastExecutionAt = execution.createdAt;
   rebuildActivityViews();
-  broadcastSnapshot();
   return execution;
 }
 
@@ -1653,6 +1908,483 @@ async function handleOpportunityValidation(res, body) {
   sendJson(res, 200, { items });
 }
 
+function opportunityAttemptKey(opportunity, body = {}) {
+  if (opportunity?.id) {
+    return `opportunity:${opportunity.id}`;
+  }
+  if (body.inputToken && body.outputToken) {
+    return `pair:${String(body.inputToken).toUpperCase()}-${String(body.outputToken).toUpperCase()}`;
+  }
+  if (body.outputMint || body.outputToken) {
+    return `asset:${String(body.outputMint || body.outputToken).toUpperCase()}`;
+  }
+  return 'global';
+}
+
+function normalizeRouteLabels(routePlan = []) {
+  return routePlan.map((item) => ({
+    label: item.label || item.swapInfo?.label || 'route',
+    ammKey: item.ammKey || item.swapInfo?.ammKey || null,
+    percent: item.percent ?? null,
+    bps: item.bps ?? null,
+  }));
+}
+
+function priceImpactWithinLimit(priceImpactPct) {
+  return Number(priceImpactPct || 0) <= CONFIG.maxPriceImpactPct;
+}
+
+function findOpportunityForRequest(body = {}) {
+  if (!body.opportunityId) {
+    return null;
+  }
+  return findOpportunity(String(body.opportunityId).trim());
+}
+
+function assetExposureForKey(assetSymbol, summary) {
+  if (!assetSymbol) {
+    return 0;
+  }
+  return Number(summary.exposureByAsset?.[assetSymbol] || 0);
+}
+
+function checkRiskGuardrails({
+  body = {},
+  opportunity = null,
+  swapUsdValue = 0,
+  priceImpactPct = 0,
+  routePlan = [],
+  mode = 'wallet-build',
+}) {
+  const summary = computeRiskSummary();
+  if (state.risk.killSwitch) {
+    return {
+      ok: false,
+      status: 423,
+      code: 'kill_switch',
+      error: state.risk.killSwitchReason || 'Kill switch is enabled',
+      summary,
+    };
+  }
+
+  if (mode === 'demo' && !CONFIG.demoExecutionEnabled) {
+    return {
+      ok: false,
+      status: 403,
+      code: 'demo_disabled',
+      error: 'DEMO_EXECUTION_ENABLED is false',
+      summary,
+    };
+  }
+
+  if (summary.counters.dailyLossUsd >= CONFIG.maxDailyLossUsd) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'daily_loss_limit',
+      error: `Daily loss limit reached (${CONFIG.maxDailyLossUsd} USD)`,
+      summary,
+    };
+  }
+
+  if (summary.counters.consecutiveFailures >= CONFIG.maxConsecutiveFailures) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'consecutive_failures',
+      error: `Consecutive failure limit reached (${CONFIG.maxConsecutiveFailures})`,
+      summary,
+    };
+  }
+
+  if (Number(swapUsdValue || 0) > CONFIG.maxExecutionUsd) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'max_execution_usd',
+      error: `Swap size exceeds MAX_EXECUTION_USD (${CONFIG.maxExecutionUsd})`,
+      summary,
+    };
+  }
+
+  if (Number(swapUsdValue || 0) < CONFIG.minQuoteOutUsd) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'min_quote_out_usd',
+      error: `Swap quote is below MIN_QUOTE_OUT_USD (${CONFIG.minQuoteOutUsd})`,
+      summary,
+    };
+  }
+
+  if (!priceImpactWithinLimit(priceImpactPct)) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'price_impact_limit',
+      error: `Price impact exceeds MAX_PRICE_IMPACT_PCT (${CONFIG.maxPriceImpactPct})`,
+      summary,
+    };
+  }
+
+  const assetSymbol = opportunity?.symbol || body.outputToken || body.inputToken || null;
+  if (
+    assetSymbol &&
+    state.risk.assetBlacklist.some(
+      (item) => item.toUpperCase() === String(assetSymbol).toUpperCase(),
+    )
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      code: 'asset_blacklisted',
+      error: `${assetSymbol} is blacklisted`,
+      summary,
+    };
+  }
+
+  const routeLabels = normalizeRouteLabels(routePlan).map((item) =>
+    String(item.label || '').toLowerCase(),
+  );
+  const blockedDex = state.risk.dexBlacklist.find((item) =>
+    routeLabels.some((label) => label.includes(String(item).toLowerCase())),
+  );
+  if (blockedDex) {
+    return {
+      ok: false,
+      status: 403,
+      code: 'dex_blacklisted',
+      error: `Route touches blacklisted venue ${blockedDex}`,
+      summary,
+    };
+  }
+
+  const currentExposure = assetExposureForKey(assetSymbol, summary);
+  if (currentExposure + Number(swapUsdValue || 0) > CONFIG.maxTokenExposureUsd) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'token_exposure_limit',
+      error: `Token exposure limit reached for ${assetSymbol}`,
+      summary,
+    };
+  }
+
+  const cooldownKey = opportunityAttemptKey(opportunity, body);
+  const lastAttempt = state.risk.lastAttemptByKey[cooldownKey];
+  if (lastAttempt) {
+    const remainingMs =
+      CONFIG.executionCooldownMs - (Date.now() - new Date(lastAttempt).getTime());
+    if (remainingMs > 0) {
+      return {
+        ok: false,
+        status: 429,
+        code: 'cooldown_active',
+        error: `Cooldown is active for ${cooldownKey}`,
+        summary: {
+          ...summary,
+          cooldownKey,
+          cooldownRemainingMs: remainingMs,
+        },
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    summary,
+    cooldownKey,
+  };
+}
+
+function keyAtIndex(accountKeys = [], index = -1) {
+  const item = accountKeys[index];
+  if (!item) {
+    return null;
+  }
+  if (typeof item === 'string') {
+    return item;
+  }
+  if (typeof item.pubkey === 'string') {
+    return item.pubkey;
+  }
+  if (item.pubkey?.toBase58) {
+    return item.pubkey.toBase58();
+  }
+  return null;
+}
+
+function tokenBalanceDelta(meta, owner, mint) {
+  const balances = [
+    ...(meta?.preTokenBalances || []).map((item) => ({ ...item, phase: 'pre' })),
+    ...(meta?.postTokenBalances || []).map((item) => ({ ...item, phase: 'post' })),
+  ].filter(
+    (item) =>
+      item.owner === owner &&
+      item.mint === mint,
+  );
+  if (!balances.length) {
+    return null;
+  }
+  const pre = balances
+    .filter((item) => item.phase === 'pre')
+    .reduce(
+      (sum, item) => sum + Number(item.uiTokenAmount?.uiAmount || 0),
+      0,
+    );
+  const post = balances
+    .filter((item) => item.phase === 'post')
+    .reduce(
+      (sum, item) => sum + Number(item.uiTokenAmount?.uiAmount || 0),
+      0,
+    );
+  return round6(post - pre);
+}
+
+function nativeSolDelta(tx, owner) {
+  const accountKeys = tx?.transaction?.message?.accountKeys || [];
+  const index = accountKeys.findIndex((_, itemIndex) => keyAtIndex(accountKeys, itemIndex) === owner);
+  if (index < 0) {
+    return null;
+  }
+  const pre = Number(tx?.meta?.preBalances?.[index] || 0);
+  const post = Number(tx?.meta?.postBalances?.[index] || 0);
+  return round6((post - pre) / LAMPORTS_PER_SOL);
+}
+
+async function fetchExecutionReceipt({
+  signature,
+  walletPublicKey,
+  inputToken,
+  outputToken,
+}) {
+  const tx = await connection.getTransaction(signature, {
+    maxSupportedTransactionVersion: 0,
+    commitment: 'confirmed',
+  });
+  if (!tx) {
+    return {
+      signature,
+      status: 'pending-chain',
+      success: false,
+      failureReason: 'Transaction metadata is not available yet',
+      feeLamports: null,
+    };
+  }
+
+  const inputDelta =
+    inputToken.symbol === 'SOL'
+      ? nativeSolDelta(tx, walletPublicKey)
+      : tokenBalanceDelta(tx.meta, walletPublicKey, inputToken.mint);
+  const outputDelta =
+    outputToken.symbol === 'SOL'
+      ? nativeSolDelta(tx, walletPublicKey)
+      : tokenBalanceDelta(tx.meta, walletPublicKey, outputToken.mint);
+
+  return {
+    signature,
+    slot: tx.slot,
+    status: tx.meta?.err ? 'failed' : 'confirmed',
+    success: !tx.meta?.err,
+    failureReason: tx.meta?.err ? JSON.stringify(tx.meta.err) : null,
+    feeLamports: Number(tx.meta?.fee || 0),
+    actualInputDelta: inputDelta == null ? null : round6(Math.abs(inputDelta)),
+    actualOutputDelta: outputDelta == null ? null : round6(Math.max(0, outputDelta)),
+  };
+}
+
+function walletExecutionNetUsd({
+  inputSymbol,
+  outputSymbol,
+  amountIn,
+  actualOutputDelta,
+  feeLamports,
+}) {
+  if (isStableSymbol(outputSymbol) && isStableSymbol(inputSymbol)) {
+    return round2(Number(actualOutputDelta || 0) - Number(amountIn || 0));
+  }
+  if (isStableSymbol(outputSymbol)) {
+    return round2(Number(actualOutputDelta || 0));
+  }
+  if (isStableSymbol(inputSymbol)) {
+    return round2(-Number(amountIn || 0));
+  }
+  if (feeLamports != null) {
+    return null;
+  }
+  return null;
+}
+
+async function registerWalletExecutionReport(body) {
+  const inputToken = await resolveToken(body.inputToken || body.inputMint, body.inputDecimals);
+  const outputToken = await resolveToken(body.outputToken || body.outputMint, body.outputDecimals);
+  if (!inputToken || !outputToken) {
+    throw new Error('Input or output token is unsupported for wallet report');
+  }
+  const walletPublicKey = String(body.walletPublicKey || body.userPublicKey || '').trim();
+  const signature = String(body.signature || '').trim();
+  if (!walletPublicKey || !signature) {
+    throw new Error('walletPublicKey and signature are required');
+  }
+
+  const receipt = await fetchExecutionReceipt({
+    signature,
+    walletPublicKey,
+    inputToken,
+    outputToken,
+  });
+  const actualNetUsd = walletExecutionNetUsd({
+    inputSymbol: inputToken.symbol,
+    outputSymbol: outputToken.symbol,
+    amountIn: body.amountIn,
+    actualOutputDelta: receipt.actualOutputDelta,
+    feeLamports: receipt.feeLamports,
+  });
+  const entry = appendTradeLedger({
+    type: 'wallet-report',
+    mode: 'wallet',
+    status: receipt.status,
+    success: receipt.success,
+    signature,
+    slot: receipt.slot,
+    walletPublicKey,
+    opportunityId: body.opportunityId || null,
+    assetSymbol: outputToken.symbol,
+    inputSymbol: inputToken.symbol,
+    outputSymbol: outputToken.symbol,
+    inputMint: inputToken.mint,
+    outputMint: outputToken.mint,
+    amountIn: String(body.amountIn || body.amount || ''),
+    quotedOutAmount: body.amountOutQuoted || null,
+    actualOutAmount: receipt.actualOutputDelta,
+    quotedNotionalUsd: round2(Number(body.swapUsdValue || 0)),
+    notionalUsd: round2(Number(body.swapUsdValue || 0)),
+    realizedNetUsd: actualNetUsd,
+    feeLamports: receipt.feeLamports,
+    failureReason: receipt.failureReason,
+    routePlan: normalizeRouteLabels(body.routePlan || []),
+    priceImpactPct: Number(body.priceImpactPct || 0),
+  });
+  markExecutionView(entry);
+  markTradeTransaction(entry);
+  state.lastExecutionAt = entry.createdAt;
+  rebuildActivityViews();
+  return entry;
+}
+
+async function handleExecutionReport(res, body) {
+  const entry = await registerWalletExecutionReport(body);
+  sendJson(res, 200, {
+    ok: true,
+    entry,
+    risk: computeRiskSummary(),
+  });
+}
+
+async function handleDemoExecution(res, body) {
+  const opportunity = findOpportunityForRequest(body);
+  if (!opportunity) {
+    sendJson(res, 404, {
+      ok: false,
+      error: 'Opportunity not found',
+    });
+    return;
+  }
+
+  const validation = await validateOpportunity(opportunity, {
+    usd: body.usd,
+    slippageBps: body.slippageBps,
+  });
+  const guardrails = checkRiskGuardrails({
+    body,
+    opportunity,
+    swapUsdValue: validation.amountUsd || opportunity.capital,
+    priceImpactPct: validation.maxPriceImpactPct || 0,
+    routePlan: [
+      ...(validation.routeIn || []).map((label) => ({ label })),
+      ...(validation.routeOut || []).map((label) => ({ label })),
+    ],
+    mode: 'demo',
+  });
+  if (!guardrails.ok) {
+    const rejected = appendTradeLedger({
+      type: 'demo-execution',
+      mode: 'demo',
+      status: 'rejected',
+      success: false,
+      opportunityId: opportunity.id,
+      assetSymbol: opportunity.symbol,
+      inputSymbol: 'USDC',
+      outputSymbol: opportunity.symbol,
+      quotedNotionalUsd: round2(Number(validation.amountUsd || opportunity.capital)),
+      notionalUsd: round2(Number(validation.amountUsd || opportunity.capital)),
+      quotedNetUsd: round2(Number(opportunity.net || 0)),
+      realizedNetUsd: null,
+      failureReason: guardrails.error,
+      routePlan: [
+        ...(validation.routeIn || []).map((label) => ({ label })),
+        ...(validation.routeOut || []).map((label) => ({ label })),
+      ],
+      priceImpactPct: validation.maxPriceImpactPct || 0,
+    });
+    sendJson(res, guardrails.status, {
+      ok: false,
+      error: guardrails.error,
+      code: guardrails.code,
+      risk: guardrails.summary,
+      entry: rejected,
+    });
+    return;
+  }
+
+  recordAttemptCooldown(guardrails.cooldownKey);
+  state.lastExecutionAt = nowIso();
+  const realizedNetUsd = Number(validation.roundTripNetUsd || 0);
+  const entry = appendTradeLedger({
+    type: 'demo-execution',
+    mode: 'demo',
+    status: validation.status === 'validated' ? 'confirmed' : 'weak',
+    success: validation.status === 'validated',
+    opportunityId: opportunity.id,
+    assetSymbol: opportunity.symbol,
+    inputSymbol: 'USDC',
+    outputSymbol: opportunity.symbol,
+    quotedNotionalUsd: round2(Number(validation.amountUsd || opportunity.capital)),
+    notionalUsd: round2(Number(validation.amountUsd || opportunity.capital)),
+    quotedNetUsd: round2(Number(opportunity.net || 0)),
+    realizedNetUsd,
+    validationStatus: validation.status,
+    validationLabel: validation.statusLabel,
+    failureReason: validation.warning,
+    routePlan: [
+      ...(validation.routeIn || []).map((label) => ({ label })),
+      ...(validation.routeOut || []).map((label) => ({ label })),
+    ],
+    priceImpactPct: validation.maxPriceImpactPct || 0,
+  });
+  markExecutionView(entry);
+  rebuildActivityViews();
+  sendJson(res, 200, {
+    ok: true,
+    entry,
+    validation,
+    risk: computeRiskSummary(),
+  });
+}
+
+function handleKillSwitchUpdate(res, body) {
+  const enabled = Boolean(body.enabled);
+  state.risk.killSwitch = enabled;
+  state.risk.killSwitchReason = enabled
+    ? String(body.reason || 'Enabled from dashboard')
+    : null;
+  void persistRuntimeState();
+  sendJson(res, 200, {
+    ok: true,
+    risk: computeRiskSummary(),
+  });
+}
+
 async function handleExecutionQuote(res, body) {
   const context = await buildExecutionContext(body);
   sendJson(res, 200, {
@@ -1698,10 +2430,21 @@ async function handleExecutionBuild(res, body) {
 
   const context = await buildExecutionContext(body);
   const swapUsdValue = Number(context.quote.swapUsdValue || 0);
-  if (swapUsdValue > CONFIG.maxExecutionUsd) {
-    sendJson(res, 400, {
+  const opportunity = findOpportunityForRequest(body);
+  const guardrails = checkRiskGuardrails({
+    body,
+    opportunity,
+    swapUsdValue,
+    priceImpactPct: Number(context.quote.priceImpactPct || 0),
+    routePlan: context.quote.routePlan || [],
+    mode: 'wallet-build',
+  });
+  if (!guardrails.ok) {
+    sendJson(res, guardrails.status, {
       ok: false,
-      error: `Swap size exceeds MAX_EXECUTION_USD (${CONFIG.maxExecutionUsd})`,
+      error: guardrails.error,
+      code: guardrails.code,
+      risk: guardrails.summary,
       swapUsdValue: round2(swapUsdValue),
     });
     return;
@@ -1712,6 +2455,7 @@ async function handleExecutionBuild(res, body) {
     ok: true,
     mode: 'wallet',
     walletExecutionSupported: true,
+    opportunityId: opportunity?.id || null,
     inputToken: context.inputToken,
     outputToken: context.outputToken,
     amountIn: context.amount,
@@ -1739,6 +2483,7 @@ async function handleExecutionBuild(res, body) {
       prioritizationFeeLamports: swapResponse.prioritizationFeeLamports,
       computeUnitLimit: swapResponse.computeUnitLimit,
     },
+    risk: guardrails.summary,
   });
 }
 
@@ -1762,14 +2507,26 @@ async function handleExecutionExecute(res, body) {
 
   const context = await buildExecutionContext(body);
   const swapUsdValue = Number(context.quote.swapUsdValue || 0);
-  if (swapUsdValue > CONFIG.maxExecutionUsd) {
-    sendJson(res, 400, {
+  const opportunity = findOpportunityForRequest(body);
+  const guardrails = checkRiskGuardrails({
+    body,
+    opportunity,
+    swapUsdValue,
+    priceImpactPct: Number(context.quote.priceImpactPct || 0),
+    routePlan: context.quote.routePlan || [],
+    mode: 'server-live',
+  });
+  if (!guardrails.ok) {
+    sendJson(res, guardrails.status, {
       ok: false,
-      error: `Swap size exceeds MAX_EXECUTION_USD (${CONFIG.maxExecutionUsd})`,
+      error: guardrails.error,
+      code: guardrails.code,
+      risk: guardrails.summary,
       swapUsdValue: round2(swapUsdValue),
     });
     return;
   }
+  recordAttemptCooldown(guardrails.cooldownKey);
 
   const swapResponse = await buildSwapTransaction(
     context.quote,
@@ -1781,6 +2538,7 @@ async function handleExecutionExecute(res, body) {
     inputToken: context.inputToken,
     outputToken: context.outputToken,
     uiAmount: context.amount,
+    opportunity,
   });
   sendJson(res, 200, {
     ok: true,
@@ -1790,6 +2548,7 @@ async function handleExecutionExecute(res, body) {
       prioritizationFeeLamports: swapResponse.prioritizationFeeLamports,
       computeUnitLimit: swapResponse.computeUnitLimit,
     },
+    risk: computeRiskSummary(),
   });
 }
 
@@ -1925,6 +2684,18 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/trade-ledger') {
+      sendJson(res, 200, {
+        items: state.tradeLedger.slice(0, limitFrom(url, 150)),
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/risk/status') {
+      sendJson(res, 200, computeRiskSummary());
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/stream') {
       registerSseClient(req, res);
       return;
@@ -1948,6 +2719,12 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/opportunities/demo-execute') {
+      const body = await readBody(req);
+      await handleDemoExecution(res, body);
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/execution/quote') {
       const body = await readBody(req);
       await handleExecutionQuote(res, body);
@@ -1960,9 +2737,21 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/execution/report') {
+      const body = await readBody(req);
+      await handleExecutionReport(res, body);
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/execution/execute') {
       const body = await readBody(req);
       await handleExecutionExecute(res, body);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/risk/kill-switch') {
+      const body = await readBody(req);
+      handleKillSwitchUpdate(res, body);
       return;
     }
 
@@ -1978,6 +2767,8 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(CONFIG.port, async () => {
   console.log(`TradeBotHub backend v${VERSION} listening on ${CONFIG.port}`);
+  await loadRuntimeState();
+  rebuildActivityViews();
   await scanMarket();
   setInterval(() => {
     void scanMarket();
