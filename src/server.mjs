@@ -12,7 +12,7 @@ import {
 } from '@solana/web3.js';
 import bs58 from 'bs58';
 
-const VERSION = '3.2.0';
+const VERSION = '3.3.0';
 const TIP_ACCOUNTS = [
   '4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE',
   'D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ',
@@ -345,6 +345,158 @@ const SCANNER_ASSETS = SCANNER_ASSET_CATALOG.filter((asset) => {
   );
 });
 
+const EXECUTOR_REGISTRY = {
+  solana: {
+    chainId: 'solana',
+    chainName: 'Solana',
+    status: 'active',
+    quoteSupport: true,
+    buildSupport: true,
+    executeSupport: true,
+    walletSupport: true,
+    flashLoanStage: 'research',
+    routeProvider: 'Jupiter',
+    notes: 'Wallet build and live server execution are implemented.',
+  },
+  base: {
+    chainId: 'base',
+    chainName: 'Base',
+    status: 'prepared',
+    quoteSupport: false,
+    buildSupport: false,
+    executeSupport: false,
+    walletSupport: false,
+    flashLoanStage: 'planned',
+    routeProvider: 'planned',
+    notes: 'Scanner coverage is active. Executor wiring is the next step.',
+  },
+  arbitrum: {
+    chainId: 'arbitrum',
+    chainName: 'Arbitrum',
+    status: 'prepared',
+    quoteSupport: false,
+    buildSupport: false,
+    executeSupport: false,
+    walletSupport: false,
+    flashLoanStage: 'planned',
+    routeProvider: 'planned',
+    notes: 'Good target for atomic router plus flash-loan strategy.',
+  },
+  bsc: {
+    chainId: 'bsc',
+    chainName: 'BNB Chain',
+    status: 'prepared',
+    quoteSupport: false,
+    buildSupport: false,
+    executeSupport: false,
+    walletSupport: false,
+    flashLoanStage: 'planned',
+    routeProvider: 'planned',
+    notes: 'Discovery is on. Execution router is still pending.',
+  },
+  ethereum: {
+    chainId: 'ethereum',
+    chainName: 'Ethereum',
+    status: 'discovery',
+    quoteSupport: false,
+    buildSupport: false,
+    executeSupport: false,
+    walletSupport: false,
+    flashLoanStage: 'planned',
+    routeProvider: 'planned',
+    notes: 'Scanner only for now because gas makes weak routes unusable.',
+  },
+  optimism: {
+    chainId: 'optimism',
+    chainName: 'Optimism',
+    status: 'discovery',
+    quoteSupport: false,
+    buildSupport: false,
+    executeSupport: false,
+    walletSupport: false,
+    flashLoanStage: 'planned',
+    routeProvider: 'planned',
+    notes: 'Tracked for discovery expansion.',
+  },
+  polygon: {
+    chainId: 'polygon',
+    chainName: 'Polygon',
+    status: 'discovery',
+    quoteSupport: false,
+    buildSupport: false,
+    executeSupport: false,
+    walletSupport: false,
+    flashLoanStage: 'planned',
+    routeProvider: 'planned',
+    notes: 'Tracked for discovery expansion.',
+  },
+  avalanche: {
+    chainId: 'avalanche',
+    chainName: 'Avalanche',
+    status: 'discovery',
+    quoteSupport: false,
+    buildSupport: false,
+    executeSupport: false,
+    walletSupport: false,
+    flashLoanStage: 'planned',
+    routeProvider: 'planned',
+    notes: 'Tracked for discovery expansion.',
+  },
+};
+
+const STRATEGY_CATALOG = [
+  {
+    id: 'wallet-route',
+    name: 'Wallet route execution',
+    stage: 'active',
+    chainIds: ['solana'],
+    flashLoan: false,
+    atomic: false,
+    requiresOwnCapital: true,
+    description: 'Backend prepares a swap and the browser wallet signs locally.',
+  },
+  {
+    id: 'server-live-executor',
+    name: 'Server live executor',
+    stage: 'guarded',
+    chainIds: ['solana'],
+    flashLoan: false,
+    atomic: false,
+    requiresOwnCapital: true,
+    description: 'Server-side execution is available but intentionally blocked until signer and live flags are correct.',
+  },
+  {
+    id: 'multi-chain-router',
+    name: 'Multi-chain router',
+    stage: 'building',
+    chainIds: ['base', 'arbitrum', 'bsc'],
+    flashLoan: false,
+    atomic: false,
+    requiresOwnCapital: true,
+    description: 'Prepared execution slots for the next chains after Solana.',
+  },
+  {
+    id: 'atomic-arb-engine',
+    name: 'Atomic arbitrage engine',
+    stage: 'planned',
+    chainIds: ['solana', 'base', 'arbitrum', 'bsc'],
+    flashLoan: true,
+    atomic: true,
+    requiresOwnCapital: false,
+    description: 'Future route for contract-based atomic bundles and post-trade settlement.',
+  },
+  {
+    id: 'flash-loan-orchestrator',
+    name: 'Flash-loan orchestrator',
+    stage: 'research',
+    chainIds: ['base', 'arbitrum', 'bsc', 'ethereum'],
+    flashLoan: true,
+    atomic: true,
+    requiresOwnCapital: false,
+    description: 'Scaffolding and readiness metadata only. Real flash-loan contracts are not deployed yet.',
+  },
+];
+
 const state = {
   market: [],
   opportunities: [],
@@ -364,6 +516,7 @@ const state = {
 
 const sseClients = new Set();
 const tokenCache = new Map();
+const validationCache = new Map();
 let signerCache;
 
 const connection = new Connection(CONFIG.solanaRpcUrl, 'confirmed');
@@ -464,6 +617,13 @@ function getStats() {
   const signer = getSignerInfo();
   const readiness = executionReadinessSync();
   const activeChains = [...new Set(state.market.map((item) => item.chainId).filter(Boolean))];
+  const highQualityCount = state.opportunities.filter((item) =>
+    ['A', 'B'].includes(item.qualityTier),
+  ).length;
+  const readyOpportunityCount = state.opportunities.filter(
+    (item) => item.executionSupported && item.qualityScore >= 60,
+  ).length;
+  const liveExecutors = readiness.executors.filter((item) => item.status === 'active').length;
   return {
     version: VERSION,
     now: nowIso(),
@@ -477,6 +637,10 @@ function getStats() {
     chainCount: activeChains.length,
     scannerAssetCount: SCANNER_ASSETS.length,
     scannerChains: activeChains,
+    highQualityOpportunityCount: highQualityCount,
+    readyOpportunityCount,
+    executorCount: readiness.executors.length,
+    liveExecutorCount: liveExecutors,
     estimatedNetUsd: round2(
       state.opportunities.reduce((sum, item) => sum + Number(item.net || 0), 0),
     ),
@@ -574,11 +738,13 @@ function executionReadinessSync() {
     reasons.push('HELIUS_API_KEY is required for helius-sender mode');
   }
 
+  const canExecuteLive = reasons.length === 0;
+
   return {
     version: VERSION,
     mode: CONFIG.executionMode,
     liveTradingEnabled: CONFIG.liveTradingEnabled,
-    canExecuteLive: reasons.length === 0,
+    canExecuteLive,
     walletExecutionSupported: true,
     reasons,
     signerConfigured: signer.configured,
@@ -596,6 +762,8 @@ function executionReadinessSync() {
     executionChains: ['solana'],
     scannerAssetCount: SCANNER_ASSETS.length,
     scannerChains: [...SCANNER_CHAIN_IDS],
+    executors: listExecutorCapabilities(canExecuteLive),
+    strategies: listStrategyCapabilities(),
   };
 }
 
@@ -727,11 +895,122 @@ function median(values) {
   return sorted[middle];
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function deviationBps(value, baseline) {
   if (!Number.isFinite(value) || !Number.isFinite(baseline) || baseline <= 0) {
     return Number.POSITIVE_INFINITY;
   }
   return Math.abs(value - baseline) / baseline * 10000;
+}
+
+function listExecutorCapabilities(solanaLiveReady = false) {
+  return Object.values(EXECUTOR_REGISTRY).map((executor) => ({
+    ...executor,
+    liveReady: executor.chainId === 'solana' ? solanaLiveReady : false,
+  }));
+}
+
+function listStrategyCapabilities() {
+  return STRATEGY_CATALOG.map((strategy) => ({
+    ...strategy,
+    chainNames: strategy.chainIds.map(
+      (chainId) => EXECUTOR_REGISTRY[chainId]?.chainName || chainId,
+    ),
+  }));
+}
+
+function qualityTierFromScore(score) {
+  if (score >= 80) {
+    return 'A';
+  }
+  if (score >= 65) {
+    return 'B';
+  }
+  if (score >= 50) {
+    return 'C';
+  }
+  return 'D';
+}
+
+function strategyHintsForOpportunity(opportunity) {
+  const executor = EXECUTOR_REGISTRY[opportunity.chainId] || null;
+  if (opportunity.executionSupported) {
+    const flashLoanCandidate =
+      opportunity.capital > CONFIG.maxExecutionUsd || opportunity.net >= 20;
+    return {
+      executionProfile: 'wallet-route',
+      strategyLabel: flashLoanCandidate ? 'Wallet now, atomic later' : 'Wallet executable',
+      flashLoanCandidate,
+      requiresOwnCapital: true,
+      atomicCandidate: flashLoanCandidate,
+      recommendedMode: 'wallet-build',
+      executorStatus: executor?.status || 'active',
+    };
+  }
+
+  const flashLoanCandidate = ['base', 'arbitrum', 'bsc', 'ethereum'].includes(
+    opportunity.chainId,
+  );
+  return {
+    executionProfile: flashLoanCandidate ? 'atomic-arb-engine' : 'discovery-only',
+    strategyLabel: flashLoanCandidate ? 'Atomic / flash-loan path' : 'Discovery only',
+    flashLoanCandidate,
+    requiresOwnCapital: !flashLoanCandidate,
+    atomicCandidate: flashLoanCandidate,
+    recommendedMode: flashLoanCandidate ? 'wait-executor' : 'paper',
+    executorStatus: executor?.status || 'discovery',
+  };
+}
+
+function qualityModel({
+  buy,
+  sell,
+  spreadBps,
+  net,
+  baselinePriceUsd,
+  executionSupported,
+}) {
+  const minLiquidity = Math.min(buy.liquidity, sell.liquidity);
+  const combinedVolume24h = buy.volume24h + sell.volume24h;
+  const combinedTxns1h = buy.txns1h + sell.txns1h;
+  const averageDeviationBps =
+    (deviationBps(buy.priceUsd, baselinePriceUsd) +
+      deviationBps(sell.priceUsd, baselinePriceUsd)) /
+    2;
+
+  const spreadScore = clamp((spreadBps / 180) * 28, 0, 28);
+  const liquidityScore = clamp((Math.log10(minLiquidity + 1) - 4.2) * 8, 0, 20);
+  const volumeScore = clamp((Math.log10(combinedVolume24h + 1) - 3) * 5, 0, 16);
+  const activityScore = clamp(combinedTxns1h / 18, 0, 10);
+  const netScore = clamp(net / 3, 0, 10);
+  const stabilityScore = clamp(12 - averageDeviationBps / 55, 0, 12);
+  const executionScore = executionSupported ? 10 : 2;
+  const qualityScore = round2(
+    clamp(
+      spreadScore +
+        liquidityScore +
+        volumeScore +
+        activityScore +
+        netScore +
+        stabilityScore +
+        executionScore,
+      1,
+      100,
+    ),
+  );
+
+  return {
+    qualityScore,
+    qualityTier: qualityTierFromScore(qualityScore),
+    minLiquidityUsd: round2(minLiquidity),
+    maxLiquidityUsd: round2(Math.max(buy.liquidity, sell.liquidity)),
+    combinedVolume24h: round2(combinedVolume24h),
+    combinedTxns1h,
+    priceDeviationBps: round2(averageDeviationBps),
+  };
 }
 
 function deriveOpportunities(market) {
@@ -799,6 +1078,20 @@ function deriveOpportunities(market) {
         const gross = capital * (spreadBps / 10000);
         const costs = capital * (CONFIG.estimatedCostBps / 10000);
         const net = gross - costs;
+        const quality = qualityModel({
+          buy,
+          sell,
+          spreadBps,
+          net,
+          baselinePriceUsd,
+          executionSupported: buy.executionSupported,
+        });
+        const hints = strategyHintsForOpportunity({
+          chainId: buy.chainId,
+          executionSupported: buy.executionSupported,
+          capital,
+          net,
+        });
         opportunities.push({
           id: crypto.randomUUID(),
           detectedAt: nowIso(),
@@ -818,16 +1111,32 @@ function deriveOpportunities(market) {
           costs: round2(costs),
           net: round2(net),
           score: Math.max(1, Math.round(spreadBps - CONFIG.estimatedCostBps)),
-          status: net > 0 ? 'candidate' : 'watch',
+          status: net > 0 ? (buy.executionSupported ? 'ready' : 'candidate') : 'watch',
           routePreview: [buy.dex, sell.dex],
           marketBaselineUsd: round6(baselinePriceUsd),
+          quoteSymbol: buy.quoteSymbol,
+          qualityScore: quality.qualityScore,
+          qualityTier: quality.qualityTier,
+          minLiquidityUsd: quality.minLiquidityUsd,
+          maxLiquidityUsd: quality.maxLiquidityUsd,
+          combinedVolume24h: quality.combinedVolume24h,
+          combinedTxns1h: quality.combinedTxns1h,
+          priceDeviationBps: quality.priceDeviationBps,
+          executionProfile: hints.executionProfile,
+          strategyLabel: hints.strategyLabel,
+          flashLoanCandidate: hints.flashLoanCandidate,
+          atomicCandidate: hints.atomicCandidate,
+          requiresOwnCapital: hints.requiresOwnCapital,
+          recommendedMode: hints.recommendedMode,
+          executorStatus: hints.executorStatus,
+          validationState: buy.executionSupported ? 'pending-quote' : 'discovery-only',
         });
       }
     }
   }
 
   return opportunities
-    .sort((a, b) => b.net - a.net)
+    .sort((a, b) => b.qualityScore - a.qualityScore || b.net - a.net)
     .slice(0, CONFIG.maxOpportunities);
 }
 
@@ -1148,6 +1457,202 @@ async function buildExecutionContext(body) {
   return { inputToken, outputToken, slippageBps, amount, rawAmount, quote };
 }
 
+function validationCacheKey(opportunityId, usd, slippageBps) {
+  return `${opportunityId}:${round2(usd)}:${Number(slippageBps)}`;
+}
+
+function getCachedValidation(key) {
+  const entry = validationCache.get(key);
+  if (!entry) {
+    return null;
+  }
+  if (entry.expiresAt < Date.now()) {
+    validationCache.delete(key);
+    return null;
+  }
+  return entry.payload;
+}
+
+function setCachedValidation(key, payload) {
+  validationCache.set(key, {
+    payload,
+    expiresAt: Date.now() + 30000,
+  });
+}
+
+function findOpportunity(id) {
+  return state.opportunities.find((item) => item.id === id) || null;
+}
+
+function safeUsdAmount(opportunity, requestedUsd) {
+  const opportunityCap = Number(opportunity.capital || CONFIG.maxExecutionUsd);
+  const fallback = Math.min(opportunityCap, CONFIG.maxExecutionUsd, 250);
+  const chosen = Number.isFinite(Number(requestedUsd)) ? Number(requestedUsd) : fallback;
+  return round2(clamp(chosen, 25, Math.max(25, Math.min(opportunityCap, CONFIG.maxExecutionUsd))));
+}
+
+async function validateSolanaOpportunity(opportunity, options = {}) {
+  const usdc = tokenCache.get('USDC');
+  const asset = await resolveToken(opportunity.tokenMint || opportunity.assetAddress);
+  if (!usdc || !asset) {
+    throw new Error('Token metadata is missing for Solana validation');
+  }
+
+  const amountUsd = safeUsdAmount(opportunity, options.usd);
+  const slippageBps = clamp(
+    Number(options.slippageBps || CONFIG.swapSlippageBps),
+    1,
+    500,
+  );
+  const key = validationCacheKey(opportunity.id, amountUsd, slippageBps);
+  const cached = getCachedValidation(key);
+  if (cached) {
+    return cached;
+  }
+
+  const rawUsdcIn = humanToRawAmount(amountUsd.toFixed(usdc.decimals), usdc.decimals);
+  const buyQuote = await fetchSwapQuote({
+    inputMint: usdc.mint,
+    outputMint: asset.mint,
+    rawAmount: rawUsdcIn,
+    slippageBps,
+  });
+  const sellQuote = await fetchSwapQuote({
+    inputMint: asset.mint,
+    outputMint: usdc.mint,
+    rawAmount: BigInt(String(buyQuote.outAmount)),
+    slippageBps,
+  });
+
+  const quotedTokenOut = Number(rawToHuman(buyQuote.outAmount, asset.decimals));
+  const quotedUsdBack = Number(rawToHuman(sellQuote.outAmount, usdc.decimals));
+  const roundTripNetUsd = round2(quotedUsdBack - amountUsd);
+  const roundTripDriftBps = round2(((quotedUsdBack - amountUsd) / amountUsd) * 10000);
+  const maxPriceImpactPct = round6(
+    Math.max(
+      Number(buyQuote.priceImpactPct || 0),
+      Number(sellQuote.priceImpactPct || 0),
+    ),
+  );
+  const executable = quotedTokenOut > 0 && quotedUsdBack > 0 && maxPriceImpactPct <= 5;
+  const profitValidated = roundTripNetUsd > 0 && opportunity.net > 0;
+
+  const payload = {
+    opportunityId: opportunity.id,
+    checkedAt: nowIso(),
+    chainId: opportunity.chainId,
+    chainName: opportunity.chainName,
+    executorStatus: 'active',
+    validationMode: 'live-quote-roundtrip',
+    status: executable ? (profitValidated ? 'validated' : 'routable') : 'weak',
+    statusLabel: executable ? (profitValidated ? 'Quote OK' : 'Route OK') : 'Weak route',
+    executable,
+    profitValidated,
+    amountUsd,
+    slippageBps,
+    quotedTokenOut: round6(quotedTokenOut),
+    quotedUsdBack: round2(quotedUsdBack),
+    roundTripNetUsd,
+    roundTripDriftBps,
+    maxPriceImpactPct,
+    routeIn: (buyQuote.routePlan || []).map((item) => item.swapInfo?.label).filter(Boolean),
+    routeOut: (sellQuote.routePlan || []).map((item) => item.swapInfo?.label).filter(Boolean),
+    warning: profitValidated
+      ? null
+      : 'A live route exists, but this does not prove cross-DEX arbitrage profit after execution.',
+    recommendedMode: profitValidated ? 'wallet-build' : 'paper',
+  };
+  setCachedValidation(key, payload);
+  return payload;
+}
+
+async function validateOpportunity(opportunity, options = {}) {
+  const executor = EXECUTOR_REGISTRY[opportunity.chainId];
+  if (!executor) {
+    return {
+      opportunityId: opportunity.id,
+      checkedAt: nowIso(),
+      chainId: opportunity.chainId,
+      chainName: opportunity.chainName,
+      executorStatus: 'unknown',
+      validationMode: 'none',
+      status: 'unknown',
+      statusLabel: 'Unknown chain',
+      executable: false,
+      profitValidated: false,
+      warning: 'No executor metadata exists for this chain.',
+      recommendedMode: 'paper',
+    };
+  }
+
+  if (opportunity.chainId === 'solana' && executor.quoteSupport) {
+    try {
+      return await validateSolanaOpportunity(opportunity, options);
+    } catch (error) {
+      return {
+        opportunityId: opportunity.id,
+        checkedAt: nowIso(),
+        chainId: opportunity.chainId,
+        chainName: opportunity.chainName,
+        executorStatus: executor.status,
+        validationMode: 'live-quote-roundtrip',
+        status: 'quote-failed',
+        statusLabel: 'Quote failed',
+        executable: false,
+        profitValidated: false,
+        warning: error.message,
+        recommendedMode: 'paper',
+      };
+    }
+  }
+
+  return {
+    opportunityId: opportunity.id,
+    checkedAt: nowIso(),
+    chainId: opportunity.chainId,
+    chainName: opportunity.chainName,
+    executorStatus: executor.status,
+    validationMode: 'executor-metadata',
+    status: executor.status === 'prepared' ? 'prepared' : 'discovery-only',
+    statusLabel: executor.status === 'prepared' ? 'Executor pending' : 'Discovery only',
+    executable: false,
+    profitValidated: false,
+    warning: `${executor.chainName} scanner is live, but execution is not active on this chain yet.`,
+    recommendedMode: executor.status === 'prepared' ? 'wait-executor' : 'paper',
+  };
+}
+
+async function handleOpportunityValidation(res, body) {
+  const ids = Array.isArray(body.ids)
+    ? body.ids.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+  const limit = clamp(Number(body.limit || ids.length || 5), 1, 10);
+  const selected = (
+    ids.length
+      ? ids.map((id) => findOpportunity(id)).filter(Boolean)
+      : state.opportunities.slice(0, limit)
+  ).slice(0, limit);
+
+  if (!selected.length) {
+    sendJson(res, 404, {
+      ok: false,
+      error: 'No matching opportunities were found for validation',
+    });
+    return;
+  }
+
+  const items = await Promise.all(
+    selected.map((item) =>
+      validateOpportunity(item, {
+        usd: body.usd,
+        slippageBps: body.slippageBps,
+      }),
+    ),
+  );
+
+  sendJson(res, 200, { items });
+}
+
 async function handleExecutionQuote(res, body) {
   const context = await buildExecutionContext(body);
   sendJson(res, 200, {
@@ -1399,6 +1904,20 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/execution/capabilities') {
+      sendJson(res, 200, {
+        items: listExecutorCapabilities(executionReadinessSync().canExecuteLive),
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/strategies') {
+      sendJson(res, 200, {
+        items: listStrategyCapabilities(),
+      });
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/executions') {
       sendJson(res, 200, {
         items: state.executions.slice(0, limitFrom(url, 100)),
@@ -1420,6 +1939,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/simulate') {
       const body = await readBody(req);
       sendJson(res, 200, simulate(body));
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/opportunities/validate') {
+      const body = await readBody(req);
+      await handleOpportunityValidation(res, body);
       return;
     }
 
