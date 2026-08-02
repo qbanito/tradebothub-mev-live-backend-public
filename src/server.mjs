@@ -12,7 +12,7 @@ import {
 } from '@solana/web3.js';
 import bs58 from 'bs58';
 
-const VERSION = '3.1.0';
+const VERSION = '3.2.0';
 const TIP_ACCOUNTS = [
   '4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE',
   'D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ',
@@ -25,7 +25,7 @@ const TIP_ACCOUNTS = [
   '4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey',
   '4TQLFNWK8AovT1gFvda5jfw2oJeRMKEmw7aH6MGBJ3or',
 ];
-const DEFAULT_TOKENS = [
+const SOLANA_EXECUTION_TOKENS = [
   {
     symbol: 'SOL',
     name: 'Wrapped SOL',
@@ -58,6 +58,234 @@ const DEFAULT_TOKENS = [
   },
 ];
 
+const SCANNER_ASSET_CATALOG = [
+  {
+    symbol: 'SOL',
+    name: 'Wrapped SOL',
+    address: 'So11111111111111111111111111111111111111112',
+    decimals: 9,
+    chainId: 'solana',
+    chainName: 'Solana',
+    executionSupported: true,
+  },
+  {
+    symbol: 'JUP',
+    name: 'Jupiter',
+    address: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
+    decimals: 6,
+    chainId: 'solana',
+    chainName: 'Solana',
+    executionSupported: true,
+  },
+  {
+    symbol: 'BONK',
+    name: 'Bonk',
+    address: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+    decimals: 5,
+    chainId: 'solana',
+    chainName: 'Solana',
+    executionSupported: true,
+  },
+  {
+    symbol: 'WIF',
+    name: 'dogwifhat',
+    address: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
+    decimals: 6,
+    chainId: 'solana',
+    chainName: 'Solana',
+    executionSupported: true,
+  },
+  {
+    symbol: 'WETH',
+    name: 'Wrapped Ether',
+    address: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+    decimals: 18,
+    chainId: 'ethereum',
+    chainName: 'Ethereum',
+    executionSupported: false,
+  },
+  {
+    symbol: 'WBTC',
+    name: 'Wrapped BTC',
+    address: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+    decimals: 8,
+    chainId: 'ethereum',
+    chainName: 'Ethereum',
+    executionSupported: false,
+  },
+  {
+    symbol: 'UNI',
+    name: 'Uniswap',
+    address: '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984',
+    decimals: 18,
+    chainId: 'ethereum',
+    chainName: 'Ethereum',
+    executionSupported: false,
+  },
+  {
+    symbol: 'LINK',
+    name: 'Chainlink',
+    address: '0x514910771AF9Ca656af840dff83E8264EcF986CA',
+    decimals: 18,
+    chainId: 'ethereum',
+    chainName: 'Ethereum',
+    executionSupported: false,
+  },
+  {
+    symbol: 'WETH',
+    name: 'Wrapped Ether',
+    address: '0x4200000000000000000000000000000000000006',
+    decimals: 18,
+    chainId: 'base',
+    chainName: 'Base',
+    executionSupported: false,
+  },
+  {
+    symbol: 'AERO',
+    name: 'Aerodrome',
+    address: '0x940181a94A35A4569E4529A3CDfB74e38FD98631',
+    decimals: 18,
+    chainId: 'base',
+    chainName: 'Base',
+    executionSupported: false,
+  },
+  {
+    symbol: 'cbBTC',
+    name: 'Coinbase Wrapped BTC',
+    address: '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf',
+    decimals: 8,
+    chainId: 'base',
+    chainName: 'Base',
+    executionSupported: false,
+  },
+  {
+    symbol: 'WETH',
+    name: 'Wrapped Ether',
+    address: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
+    decimals: 18,
+    chainId: 'arbitrum',
+    chainName: 'Arbitrum',
+    executionSupported: false,
+  },
+  {
+    symbol: 'WBTC',
+    name: 'Wrapped BTC',
+    address: '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f',
+    decimals: 8,
+    chainId: 'arbitrum',
+    chainName: 'Arbitrum',
+    executionSupported: false,
+  },
+  {
+    symbol: 'ARB',
+    name: 'Arbitrum',
+    address: '0x912CE59144191C1204E64559FE8253a0e49E6548',
+    decimals: 18,
+    chainId: 'arbitrum',
+    chainName: 'Arbitrum',
+    executionSupported: false,
+  },
+  {
+    symbol: 'GMX',
+    name: 'GMX',
+    address: '0xfc5A1A6EB076aD7fD8a84bA5C3FfF3A8A0bA029A',
+    decimals: 18,
+    chainId: 'arbitrum',
+    chainName: 'Arbitrum',
+    executionSupported: false,
+  },
+  {
+    symbol: 'WETH',
+    name: 'Wrapped Ether',
+    address: '0x4200000000000000000000000000000000000006',
+    decimals: 18,
+    chainId: 'optimism',
+    chainName: 'Optimism',
+    executionSupported: false,
+  },
+  {
+    symbol: 'OP',
+    name: 'Optimism',
+    address: '0x4200000000000000000000000000000000000042',
+    decimals: 18,
+    chainId: 'optimism',
+    chainName: 'Optimism',
+    executionSupported: false,
+  },
+  {
+    symbol: 'WETH',
+    name: 'Wrapped Ether',
+    address: '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619',
+    decimals: 18,
+    chainId: 'polygon',
+    chainName: 'Polygon',
+    executionSupported: false,
+  },
+  {
+    symbol: 'WBTC',
+    name: 'Wrapped BTC',
+    address: '0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6',
+    decimals: 8,
+    chainId: 'polygon',
+    chainName: 'Polygon',
+    executionSupported: false,
+  },
+  {
+    symbol: 'LINK',
+    name: 'Chainlink',
+    address: '0x53E0bca35eC356BD5ddDFebBD1Fc0fD03FaBad39',
+    decimals: 18,
+    chainId: 'polygon',
+    chainName: 'Polygon',
+    executionSupported: false,
+  },
+  {
+    symbol: 'WBNB',
+    name: 'Wrapped BNB',
+    address: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
+    decimals: 18,
+    chainId: 'bsc',
+    chainName: 'BNB Chain',
+    executionSupported: false,
+  },
+  {
+    symbol: 'BTCB',
+    name: 'BTCB',
+    address: '0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c',
+    decimals: 18,
+    chainId: 'bsc',
+    chainName: 'BNB Chain',
+    executionSupported: false,
+  },
+  {
+    symbol: 'CAKE',
+    name: 'PancakeSwap',
+    address: '0x0E09Fabb73Bd3Ade0A17ECC321fD13a19e81cE82',
+    decimals: 18,
+    chainId: 'bsc',
+    chainName: 'BNB Chain',
+    executionSupported: false,
+  },
+  {
+    symbol: 'WAVAX',
+    name: 'Wrapped AVAX',
+    address: '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7',
+    decimals: 18,
+    chainId: 'avalanche',
+    chainName: 'Avalanche',
+    executionSupported: false,
+  },
+  {
+    symbol: 'JOE',
+    name: 'JOE',
+    address: '0x6e84A6216eA6dACC71eE8E6b0a5B7322EEbC0fDd',
+    decimals: 18,
+    chainId: 'avalanche',
+    chainName: 'Avalanche',
+    executionSupported: false,
+  },
+];
+
 const CONFIG = {
   port: envNumber('PORT', 8787),
   corsOrigin: process.env.CORS_ORIGIN || '*',
@@ -72,6 +300,8 @@ const CONFIG = {
   maxMedianDeviationBps: envNumber('MAX_MEDIAN_DEVIATION_BPS', 1500),
   defaultCapitalUsd: envNumber('DEFAULT_CAPITAL_USD', 10000),
   estimatedCostBps: envNumber('ESTIMATED_COST_BPS', 12),
+  maxMarketRows: envNumber('MAX_MARKET_ROWS', 600),
+  maxOpportunities: envNumber('MAX_OPPORTUNITIES', 250),
   solanaRpcUrl:
     process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
   heliusApiKey: process.env.HELIUS_API_KEY || '',
@@ -92,7 +322,28 @@ const CONFIG = {
   indexerLookbackLimit: envNumber('INDEXER_LOOKBACK_LIMIT', 100),
 };
 
-const SCANNER_TOKENS = DEFAULT_TOKENS.filter((token) => token.symbol !== 'USDC');
+const SCANNER_CHAIN_IDS = new Set(
+  csv(process.env.SCANNER_CHAIN_IDS || '').length
+    ? csv(process.env.SCANNER_CHAIN_IDS || '').map((item) => item.toLowerCase())
+    : [...new Set(SCANNER_ASSET_CATALOG.map((asset) => asset.chainId))],
+);
+const SCANNER_ASSET_KEYS = new Set(
+  csv(process.env.SCANNER_ASSET_KEYS || '').map((item) => item.toLowerCase()),
+);
+const SCANNER_ASSETS = SCANNER_ASSET_CATALOG.filter((asset) => {
+  const assetKey = `${asset.chainId}:${asset.symbol}`.toLowerCase();
+  if (!SCANNER_CHAIN_IDS.has(asset.chainId)) {
+    return false;
+  }
+  if (!SCANNER_ASSET_KEYS.size) {
+    return true;
+  }
+  return (
+    SCANNER_ASSET_KEYS.has(assetKey) ||
+    SCANNER_ASSET_KEYS.has(asset.symbol.toLowerCase()) ||
+    SCANNER_ASSET_KEYS.has(asset.chainId.toLowerCase())
+  );
+});
 
 const state = {
   market: [],
@@ -117,7 +368,7 @@ let signerCache;
 
 const connection = new Connection(CONFIG.solanaRpcUrl, 'confirmed');
 
-for (const token of DEFAULT_TOKENS) {
+for (const token of SOLANA_EXECUTION_TOKENS) {
   tokenCache.set(token.symbol.toUpperCase(), token);
   tokenCache.set(token.mint, token);
 }
@@ -212,6 +463,7 @@ async function readBody(req) {
 function getStats() {
   const signer = getSignerInfo();
   const readiness = executionReadinessSync();
+  const activeChains = [...new Set(state.market.map((item) => item.chainId).filter(Boolean))];
   return {
     version: VERSION,
     now: nowIso(),
@@ -222,6 +474,9 @@ function getStats() {
     opportunityCount: state.opportunities.length,
     transactionCount: state.transactions.length,
     arbitrageCount: state.arbitrages.length,
+    chainCount: activeChains.length,
+    scannerAssetCount: SCANNER_ASSETS.length,
+    scannerChains: activeChains,
     estimatedNetUsd: round2(
       state.opportunities.reduce((sum, item) => sum + Number(item.net || 0), 0),
     ),
@@ -337,7 +592,10 @@ function executionReadinessSync() {
       maxPriorityFeeLamports: CONFIG.maxPriorityFeeLamports,
       senderTipLamports: CONFIG.senderTipLamports,
     },
-    supportedTokens: DEFAULT_TOKENS,
+    supportedTokens: SOLANA_EXECUTION_TOKENS,
+    executionChains: ['solana'],
+    scannerAssetCount: SCANNER_ASSETS.length,
+    scannerChains: [...SCANNER_CHAIN_IDS],
   };
 }
 
@@ -412,8 +670,8 @@ async function resolveToken(query, fallbackDecimals = null) {
   return null;
 }
 
-async function fetchTokenPairs(token) {
-  const url = `https://api.dexscreener.com/latest/dex/tokens/${token.mint}`;
+async function fetchTokenPairs(asset) {
+  const url = `https://api.dexscreener.com/latest/dex/tokens/${asset.address}`;
   const response = await fetch(url, { headers: { accept: 'application/json' } });
   if (!response.ok) {
     throw new Error(`DexScreener ${response.status}`);
@@ -421,17 +679,22 @@ async function fetchTokenPairs(token) {
   const payload = await response.json();
   const pairs = Array.isArray(payload.pairs) ? payload.pairs : [];
   return pairs
-    .filter((pair) => pair.chainId === 'solana')
+    .filter((pair) => pair.chainId === asset.chainId)
     .filter((pair) => Number(pair.priceUsd) > 0 && Number(pair.liquidity?.usd || 0) > 0)
-    .map((pair) => normalizePair(token, pair))
+    .map((pair) => normalizePair(asset, pair))
     .sort((a, b) => b.liquidity - a.liquidity);
 }
 
-function normalizePair(token, pair) {
+function normalizePair(asset, pair) {
   return {
-    symbol: token.symbol,
-    name: token.name,
-    tokenMint: token.mint,
+    symbol: asset.symbol,
+    name: asset.name,
+    tokenMint: asset.address,
+    assetAddress: asset.address,
+    assetKey: `${asset.chainId}:${asset.symbol}`,
+    chainId: asset.chainId,
+    chainName: asset.chainName,
+    executionSupported: asset.executionSupported,
     pairAddress: pair.pairAddress,
     dex: pair.dexId,
     buyDex: pair.dexId,
@@ -474,13 +737,13 @@ function deviationBps(value, baseline) {
 function deriveOpportunities(market) {
   const grouped = new Map();
   for (const item of market) {
-    const current = grouped.get(item.symbol) || [];
+    const current = grouped.get(item.assetKey) || [];
     current.push(item);
-    grouped.set(item.symbol, current);
+    grouped.set(item.assetKey, current);
   }
 
   const opportunities = [];
-  for (const [symbol, items] of grouped.entries()) {
+  for (const [, items] of grouped.entries()) {
     if (items.length < 2) {
       continue;
     }
@@ -539,8 +802,12 @@ function deriveOpportunities(market) {
         opportunities.push({
           id: crypto.randomUUID(),
           detectedAt: nowIso(),
-          symbol,
+          symbol: buy.symbol,
+          chainId: buy.chainId,
+          chainName: buy.chainName,
+          executionSupported: buy.executionSupported,
           tokenMint: buy.tokenMint,
+          assetAddress: buy.assetAddress,
           buyDex: buy.dex,
           sellDex: sell.dex,
           buyPriceUsd: round6(buy.priceUsd),
@@ -559,7 +826,9 @@ function deriveOpportunities(market) {
     }
   }
 
-  return opportunities.sort((a, b) => b.net - a.net).slice(0, 150);
+  return opportunities
+    .sort((a, b) => b.net - a.net)
+    .slice(0, CONFIG.maxOpportunities);
 }
 
 function rebuildActivityViews() {
@@ -603,8 +872,11 @@ function rebuildActivityViews() {
 
 async function scanMarket() {
   try {
-    const results = await Promise.all(SCANNER_TOKENS.map((token) => fetchTokenPairs(token)));
-    state.market = results.flat().sort((a, b) => b.liquidity - a.liquidity).slice(0, 250);
+    const results = await Promise.all(SCANNER_ASSETS.map((asset) => fetchTokenPairs(asset)));
+    state.market = results
+      .flat()
+      .sort((a, b) => b.liquidity - a.liquidity)
+      .slice(0, CONFIG.maxMarketRows);
     state.opportunities = deriveOpportunities(state.market);
     state.lastScanAt = nowIso();
     broadcastSnapshot();
@@ -1117,7 +1389,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/tokens') {
       sendJson(res, 200, {
-        items: DEFAULT_TOKENS,
+        items: SOLANA_EXECUTION_TOKENS,
       });
       return;
     }
