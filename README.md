@@ -1,4 +1,4 @@
-# TradeBotHub MEV Backend v3.4
+# TradeBotHub MEV Backend v3.5
 
 Production-oriented market intelligence backend with a multi-chain scanner, guarded Solana execution support, demo execution validation, and a persistent trade ledger. It exposes market snapshots, cross-DEX opportunity estimates, SSE streaming, paper simulation, Jupiter swap quoting, signer readiness, wallet execution reporting, and optional live swap execution.
 
@@ -13,7 +13,14 @@ Use `render.yaml`, or configure the service manually:
 
 Set `CORS_ORIGIN` to your Netlify URL before going live.
 
-## What's new in v3.4
+## What's new in v3.5
+
+- Multi-chain execution planner endpoint for Base, Arbitrum, BNB Chain, Ethereum, and the existing Solana path.
+- Flash-loan provider catalog with fee, borrow-size, and readiness metadata.
+- Advanced simulation endpoint that writes planner-stage results into the trade ledger.
+- Frontend-ready EVM wallet planning support and advanced route selection flow.
+
+## Still true from v3.4
 
 - Demo execution endpoint for validating the best ready opportunity with live Jupiter quotes.
 - Trade ledger endpoint with realized and quoted PnL tracking.
@@ -51,6 +58,10 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - `MAX_TOKEN_EXPOSURE_USD`
 - `MAX_PRICE_IMPACT_PCT`
 - `MIN_QUOTE_OUT_USD`
+- `ADVANCED_PLANNER_LIMIT`
+- `FLASH_LOAN_MIN_NET_USD`
+- `FLASH_LOAN_MAX_BORROW_USD`
+- `EVM_WALLET_EXECUTION_ENABLED`
 - `TRADE_LEDGER_MAX_ENTRIES`
 - `TRADE_LEDGER_PATH`
 - `EXECUTION_BLACKLIST_ASSETS`
@@ -69,13 +80,17 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - `GET /api/errors`
 - `GET /api/tokens`
 - `GET /api/execution/status`
+- `GET /api/execution/planner`
 - `GET /api/executions`
+- `GET /api/flash-loans/providers`
 - `GET /api/trade-ledger`
 - `GET /api/risk/status`
 - `POST /api/execution/quote`
 - `POST /api/execution/build`
 - `POST /api/execution/execute`
 - `POST /api/opportunities/demo-execute`
+- `POST /api/opportunities/advanced-plan`
+- `POST /api/opportunities/advanced-simulate`
 - `POST /api/execution/report`
 - `POST /api/risk/kill-switch`
 - `POST /api/simulate`
@@ -85,6 +100,7 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - The API does not infer realized arbitrage profit from rough route estimates.
 - A successful quote is not a profit guarantee.
 - Demo execution uses live quote validation and records a simulated realized result. It is not an on-chain fill.
+- Advanced planner and flash-loan simulation provide execution planning metadata, not deployed atomic flash-loan contracts.
 - Live execution stays blocked until mode, flags, signer, and broadcast prerequisites are all satisfied.
 - Wallet-connected execution is the recommended path when you want the browser frontend to sign locally instead of storing a private key in Render.
 - Multi-chain opportunities are discovery-only unless you add a real executor for that chain. The built-in executor flow remains Solana-focused.

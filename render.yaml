@@ -56,6 +56,14 @@ services:
         value: 1.5
       - key: MIN_QUOTE_OUT_USD
         value: 25
+      - key: ADVANCED_PLANNER_LIMIT
+        value: 12
+      - key: FLASH_LOAN_MIN_NET_USD
+        value: 15
+      - key: FLASH_LOAN_MAX_BORROW_USD
+        value: 25000
+      - key: EVM_WALLET_EXECUTION_ENABLED
+        value: true
       - key: TRADE_LEDGER_MAX_ENTRIES
         value: 500
       - key: TRADE_LEDGER_PATH

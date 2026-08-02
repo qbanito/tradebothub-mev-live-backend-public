@@ -14,7 +14,7 @@ import {
 } from '@solana/web3.js';
 import bs58 from 'bs58';
 
-const VERSION = '3.4.0';
+const VERSION = '3.5.0';
 const TIP_ACCOUNTS = [
   '4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE',
   'D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ',
@@ -329,6 +329,10 @@ const CONFIG = {
   maxTokenExposureUsd: envNumber('MAX_TOKEN_EXPOSURE_USD', 2000),
   maxPriceImpactPct: envNumber('MAX_PRICE_IMPACT_PCT', 5),
   minQuoteOutUsd: envNumber('MIN_QUOTE_OUT_USD', 20),
+  advancedPlannerLimit: envNumber('ADVANCED_PLANNER_LIMIT', 12),
+  flashLoanMinNetUsd: envNumber('FLASH_LOAN_MIN_NET_USD', 15),
+  flashLoanMaxBorrowUsd: envNumber('FLASH_LOAN_MAX_BORROW_USD', 25000),
+  evmWalletExecutionEnabled: envBool('EVM_WALLET_EXECUTION_ENABLED', true),
   tradeLedgerMaxEntries: envNumber('TRADE_LEDGER_MAX_ENTRIES', 500),
   tradeLedgerPath:
     process.env.TRADE_LEDGER_PATH || '/tmp/tradebothub-mev-runtime.json',
@@ -509,6 +513,192 @@ const STRATEGY_CATALOG = [
     atomic: true,
     requiresOwnCapital: false,
     description: 'Scaffolding and readiness metadata only. Real flash-loan contracts are not deployed yet.',
+  },
+];
+
+const CHAIN_PLANNER_META = {
+  solana: {
+    walletType: 'solana',
+    recommendedWallets: ['Phantom', 'Solflare'],
+    nativeSymbol: 'SOL',
+    chainHex: null,
+    routeProviders: ['Jupiter'],
+    plannerSupport: true,
+    gasUsd: { wallet: 0.45, atomic: 1.4 },
+    bufferUsd: 2,
+    flashLoanReady: false,
+    atomicReady: false,
+  },
+  base: {
+    walletType: 'evm',
+    recommendedWallets: ['MetaMask', 'Coinbase Wallet'],
+    nativeSymbol: 'ETH',
+    chainHex: '0x2105',
+    routeProviders: ['Aerodrome', 'Uniswap v3', '0x API'],
+    plannerSupport: true,
+    gasUsd: { wallet: 1.75, atomic: 6.5 },
+    bufferUsd: 4,
+    flashLoanReady: true,
+    atomicReady: false,
+  },
+  arbitrum: {
+    walletType: 'evm',
+    recommendedWallets: ['MetaMask', 'Rabby'],
+    nativeSymbol: 'ETH',
+    chainHex: '0xa4b1',
+    routeProviders: ['Camelot', 'Uniswap v3', '0x API'],
+    plannerSupport: true,
+    gasUsd: { wallet: 1.9, atomic: 7.5 },
+    bufferUsd: 4.5,
+    flashLoanReady: true,
+    atomicReady: false,
+  },
+  bsc: {
+    walletType: 'evm',
+    recommendedWallets: ['MetaMask', 'Trust Wallet'],
+    nativeSymbol: 'BNB',
+    chainHex: '0x38',
+    routeProviders: ['PancakeSwap', 'Uniswap v3'],
+    plannerSupport: true,
+    gasUsd: { wallet: 0.7, atomic: 3.2 },
+    bufferUsd: 2.5,
+    flashLoanReady: true,
+    atomicReady: false,
+  },
+  ethereum: {
+    walletType: 'evm',
+    recommendedWallets: ['MetaMask', 'Rabby'],
+    nativeSymbol: 'ETH',
+    chainHex: '0x1',
+    routeProviders: ['Uniswap v3', 'Curve', '0x API'],
+    plannerSupport: true,
+    gasUsd: { wallet: 11.5, atomic: 28 },
+    bufferUsd: 8,
+    flashLoanReady: true,
+    atomicReady: false,
+  },
+  optimism: {
+    walletType: 'evm',
+    recommendedWallets: ['MetaMask', 'Rabby'],
+    nativeSymbol: 'ETH',
+    chainHex: '0xa',
+    routeProviders: ['Velodrome', 'Uniswap v3'],
+    plannerSupport: true,
+    gasUsd: { wallet: 0.9, atomic: 3.8 },
+    bufferUsd: 3,
+    flashLoanReady: false,
+    atomicReady: false,
+  },
+  polygon: {
+    walletType: 'evm',
+    recommendedWallets: ['MetaMask', 'Rabby'],
+    nativeSymbol: 'MATIC',
+    chainHex: '0x89',
+    routeProviders: ['QuickSwap', 'Uniswap v3'],
+    plannerSupport: true,
+    gasUsd: { wallet: 0.55, atomic: 2.9 },
+    bufferUsd: 2.5,
+    flashLoanReady: false,
+    atomicReady: false,
+  },
+  avalanche: {
+    walletType: 'evm',
+    recommendedWallets: ['MetaMask', 'Core'],
+    nativeSymbol: 'AVAX',
+    chainHex: '0xa86a',
+    routeProviders: ['Trader Joe', 'Uniswap v3'],
+    plannerSupport: true,
+    gasUsd: { wallet: 1.2, atomic: 4.6 },
+    bufferUsd: 3.5,
+    flashLoanReady: false,
+    atomicReady: false,
+  },
+};
+
+const FLASH_LOAN_PROVIDER_CATALOG = [
+  {
+    id: 'aave-v3-base',
+    provider: 'Aave V3',
+    chainId: 'base',
+    chainName: 'Base',
+    assetSymbols: ['WETH', 'cbBTC', 'AERO'],
+    feeBps: 9,
+    maxBorrowUsd: 25000,
+    status: 'mapped',
+    settlement: 'single-chain atomic',
+    notes: 'Good fit for Base atomic router when the route stays onchain.',
+  },
+  {
+    id: 'balancer-base',
+    provider: 'Balancer',
+    chainId: 'base',
+    chainName: 'Base',
+    assetSymbols: ['WETH', 'cbBTC'],
+    feeBps: 0,
+    maxBorrowUsd: 18000,
+    status: 'research',
+    settlement: 'single-tx callback',
+    notes: 'Balancer style flash loans can reduce fee drag, but route support is narrower.',
+  },
+  {
+    id: 'aave-v3-arbitrum',
+    provider: 'Aave V3',
+    chainId: 'arbitrum',
+    chainName: 'Arbitrum',
+    assetSymbols: ['WETH', 'WBTC', 'ARB', 'GMX'],
+    feeBps: 9,
+    maxBorrowUsd: 30000,
+    status: 'mapped',
+    settlement: 'single-chain atomic',
+    notes: 'Best default provider for Arbitrum routes we already rank.',
+  },
+  {
+    id: 'uniswap-v3-arbitrum',
+    provider: 'Uniswap v3 flash swap',
+    chainId: 'arbitrum',
+    chainName: 'Arbitrum',
+    assetSymbols: ['WETH', 'WBTC'],
+    feeBps: 5,
+    maxBorrowUsd: 20000,
+    status: 'research',
+    settlement: 'pool callback',
+    notes: 'Useful when the arb is already centered around Uniswap liquidity.',
+  },
+  {
+    id: 'venus-bsc',
+    provider: 'Venus',
+    chainId: 'bsc',
+    chainName: 'BNB Chain',
+    assetSymbols: ['WBNB', 'BTCB'],
+    feeBps: 8,
+    maxBorrowUsd: 22000,
+    status: 'mapped',
+    settlement: 'single-chain atomic',
+    notes: 'Primary flash liquidity lane for BNB Chain.',
+  },
+  {
+    id: 'pancakeswap-bsc',
+    provider: 'PancakeSwap flash swap',
+    chainId: 'bsc',
+    chainName: 'BNB Chain',
+    assetSymbols: ['WBNB', 'BTCB'],
+    feeBps: 5,
+    maxBorrowUsd: 18000,
+    status: 'research',
+    settlement: 'pool callback',
+    notes: 'Lower fee path when the route is centered around Pancake pools.',
+  },
+  {
+    id: 'aave-v3-ethereum',
+    provider: 'Aave V3',
+    chainId: 'ethereum',
+    chainName: 'Ethereum',
+    assetSymbols: ['WETH', 'WBTC', 'LINK', 'UNI'],
+    feeBps: 9,
+    maxBorrowUsd: 40000,
+    status: 'mapped',
+    settlement: 'single-chain atomic',
+    notes: 'Powerful but gas heavy. Best for larger spreads only.',
   },
 ];
 
@@ -846,6 +1036,13 @@ function getStats() {
   const readyOpportunityCount = state.opportunities.filter(
     (item) => item.executionSupported && item.qualityScore >= 60,
   ).length;
+  const flashLoanCandidateCount = state.opportunities.filter(
+    (item) => item.flashLoanCandidate,
+  ).length;
+  const planReadyCount = state.opportunities.filter((item) => {
+    const executor = EXECUTOR_REGISTRY[item.chainId];
+    return Boolean(executor?.status === 'prepared' && Number(item.net || 0) > 0);
+  }).length;
   const liveExecutors = readiness.executors.filter((item) => item.status === 'active').length;
   return {
     version: VERSION,
@@ -862,6 +1059,8 @@ function getStats() {
     scannerChains: activeChains,
     highQualityOpportunityCount: highQualityCount,
     readyOpportunityCount,
+    flashLoanCandidateCount,
+    planReadyCount,
     executorCount: readiness.executors.length,
     liveExecutorCount: liveExecutors,
     estimatedNetUsd: round2(
@@ -982,9 +1181,14 @@ function executionReadinessSync() {
       maxExecutionUsd: CONFIG.maxExecutionUsd,
       maxPriorityFeeLamports: CONFIG.maxPriorityFeeLamports,
       senderTipLamports: CONFIG.senderTipLamports,
+      advancedPlannerLimit: CONFIG.advancedPlannerLimit,
+      flashLoanMinNetUsd: CONFIG.flashLoanMinNetUsd,
+      flashLoanMaxBorrowUsd: CONFIG.flashLoanMaxBorrowUsd,
     },
     supportedTokens: SOLANA_EXECUTION_TOKENS,
     executionChains: ['solana'],
+    evmWalletExecutionSupported: CONFIG.evmWalletExecutionEnabled,
+    flashLoanProviderCount: FLASH_LOAN_PROVIDER_CATALOG.length,
     scannerAssetCount: SCANNER_ASSETS.length,
     scannerChains: [...SCANNER_CHAIN_IDS],
     executors: listExecutorCapabilities(canExecuteLive),
@@ -1133,10 +1337,21 @@ function deviationBps(value, baseline) {
 }
 
 function listExecutorCapabilities(solanaLiveReady = false) {
-  return Object.values(EXECUTOR_REGISTRY).map((executor) => ({
-    ...executor,
-    liveReady: executor.chainId === 'solana' ? solanaLiveReady : false,
-  }));
+  return Object.values(EXECUTOR_REGISTRY).map((executor) => {
+    const meta = chainPlannerMeta(executor.chainId);
+    return {
+      ...executor,
+      liveReady: executor.chainId === 'solana' ? solanaLiveReady : false,
+      plannerSupport: meta.plannerSupport,
+      walletType: meta.walletType,
+      recommendedWallets: meta.recommendedWallets,
+      routeProviders: meta.routeProviders,
+      chainHex: meta.chainHex,
+      flashLoanReady: meta.flashLoanReady,
+      atomicReady: meta.atomicReady,
+      flashLoanProviders: flashLoanProvidersForChain(executor.chainId).length,
+    };
+  });
 }
 
 function listStrategyCapabilities() {
@@ -1146,6 +1361,319 @@ function listStrategyCapabilities() {
       (chainId) => EXECUTOR_REGISTRY[chainId]?.chainName || chainId,
     ),
   }));
+}
+
+function chainPlannerMeta(chainId) {
+  return (
+    CHAIN_PLANNER_META[chainId] || {
+      walletType: chainId === 'solana' ? 'solana' : 'evm',
+      recommendedWallets: chainId === 'solana' ? ['Phantom'] : ['MetaMask'],
+      nativeSymbol: chainId === 'solana' ? 'SOL' : 'ETH',
+      chainHex: null,
+      routeProviders: ['planned'],
+      plannerSupport: false,
+      gasUsd: { wallet: 2, atomic: 7 },
+      bufferUsd: 3,
+      flashLoanReady: false,
+      atomicReady: false,
+    }
+  );
+}
+
+function flashLoanProvidersForChain(chainId) {
+  return FLASH_LOAN_PROVIDER_CATALOG.filter((item) => item.chainId === chainId);
+}
+
+function routePlanFromOpportunity(opportunity) {
+  return [opportunity.buyDex, opportunity.sellDex]
+    .filter(Boolean)
+    .map((label) => ({ label }));
+}
+
+function plannerGasUsd(chainId, preferFlashLoan = false) {
+  const meta = chainPlannerMeta(chainId);
+  return round2(preferFlashLoan ? meta.gasUsd.atomic : meta.gasUsd.wallet);
+}
+
+function plannerBufferUsd(chainId, preferFlashLoan = false) {
+  const meta = chainPlannerMeta(chainId);
+  return round2(Number(meta.bufferUsd || 0) + (preferFlashLoan ? 1.5 : 0));
+}
+
+function plannerWalletType(chainId) {
+  return chainPlannerMeta(chainId).walletType;
+}
+
+function plannerRecommendedWallets(chainId) {
+  return [...chainPlannerMeta(chainId).recommendedWallets];
+}
+
+function chooseFlashLoanProvider(opportunity, capitalUsd) {
+  const matches = flashLoanProvidersForChain(opportunity.chainId).filter((provider) => {
+    return (
+      !provider.assetSymbols?.length ||
+      provider.assetSymbols.includes(opportunity.symbol)
+    );
+  });
+  if (!matches.length) {
+    return null;
+  }
+  return (
+    matches.find(
+      (provider) =>
+        Number(capitalUsd || 0) <= Math.min(provider.maxBorrowUsd, CONFIG.flashLoanMaxBorrowUsd),
+    ) || matches[0]
+  );
+}
+
+function plannerStatusLabel(status) {
+  if (status === 'live-ready') {
+    return 'Live ready now';
+  }
+  if (status === 'plan-ready') {
+    return 'Plan ready';
+  }
+  if (status === 'sim-ready') {
+    return 'Simulation ready';
+  }
+  if (status === 'atomic-later') {
+    return 'Atomic later';
+  }
+  return 'Research only';
+}
+
+function plannerStepsForOpportunity({
+  opportunity,
+  walletType,
+  preferFlashLoan,
+  provider,
+  routeProviders,
+  requiredCapitalUsd,
+}) {
+  const steps = [];
+  if (walletType === 'solana') {
+    steps.push({
+      stage: 'wallet',
+      title: 'Connect Solana wallet',
+      detail: 'Use Phantom or Solflare to sign the route prepared by the backend.',
+    });
+    steps.push({
+      stage: 'quote',
+      title: 'Validate route on Jupiter',
+      detail: `Confirm ${opportunity.symbol} route feasibility before signing.`,
+    });
+    steps.push({
+      stage: 'execute',
+      title: 'Broadcast live swap',
+      detail: 'Send the prepared transaction and report the signature back to the ledger.',
+    });
+    return steps;
+  }
+
+  steps.push({
+    stage: 'wallet',
+    title: 'Connect EVM wallet',
+    detail: `Use ${plannerRecommendedWallets(opportunity.chainId).join(' or ')} on ${opportunity.chainName}.`,
+  });
+  steps.push({
+    stage: 'planner',
+    title: 'Assemble route intent',
+    detail: `Route through ${routeProviders.join(', ')} without crossing chains.`,
+  });
+  if (preferFlashLoan) {
+    steps.push({
+      stage: 'capital',
+      title: 'Borrow capital atomically',
+      detail: provider
+        ? `${provider.provider} is the mapped flash-liquidity source for roughly ${round2(requiredCapitalUsd)} USD.`
+        : 'No mapped flash-liquidity source is ready for this asset pair yet.',
+    });
+    steps.push({
+      stage: 'settlement',
+      title: 'Repay inside one transaction',
+      detail: 'The future router contract must repay principal plus fee before the transaction ends.',
+    });
+    return steps;
+  }
+
+  steps.push({
+    stage: 'capital',
+    title: 'Fund own-capital route',
+    detail: `Planner expects about ${round2(requiredCapitalUsd)} USD of wallet capital on ${opportunity.chainName}.`,
+  });
+  steps.push({
+    stage: 'settlement',
+    title: 'Sign router intent',
+    detail: 'The wallet path is planned, but an EVM router contract still has to be wired before live send.',
+  });
+  return steps;
+}
+
+function buildOpportunityExecutionPlan(opportunity, options = {}) {
+  const executor = EXECUTOR_REGISTRY[opportunity.chainId] || null;
+  const meta = chainPlannerMeta(opportunity.chainId);
+  const walletType = plannerWalletType(opportunity.chainId);
+  const requestedCapitalUsd = clamp(
+    Number(options.capitalUsd || options.usd || opportunity.capital || CONFIG.defaultCapitalUsd),
+    25,
+    CONFIG.flashLoanMaxBorrowUsd,
+  );
+  const preferFlashLoan =
+    options.preferFlashLoan != null
+      ? Boolean(options.preferFlashLoan)
+      : Boolean(opportunity.flashLoanCandidate);
+  const provider = preferFlashLoan ? chooseFlashLoanProvider(opportunity, requestedCapitalUsd) : null;
+  const requiredCapitalUsd = preferFlashLoan
+    ? round2(
+        Math.min(
+          requestedCapitalUsd,
+          provider?.maxBorrowUsd || requestedCapitalUsd,
+          CONFIG.flashLoanMaxBorrowUsd,
+        ),
+      )
+    : round2(requestedCapitalUsd);
+  const flashLoanFeeUsd = provider
+    ? round2(requiredCapitalUsd * (Number(provider.feeBps || 0) / 10000))
+    : 0;
+  const estimatedGasUsd = plannerGasUsd(opportunity.chainId, preferFlashLoan);
+  const plannerBuffer = plannerBufferUsd(opportunity.chainId, preferFlashLoan);
+  const minRequiredNetUsd = round2(
+    flashLoanFeeUsd + estimatedGasUsd + plannerBuffer + CONFIG.flashLoanMinNetUsd,
+  );
+  const projectedNetUsd = round2(
+    Number(opportunity.net || 0) - flashLoanFeeUsd - estimatedGasUsd - plannerBuffer,
+  );
+  const routeProviders = meta.routeProviders || [executor?.routeProvider || 'planned'];
+  const warnings = [];
+
+  if (walletType === 'evm' && !CONFIG.evmWalletExecutionEnabled) {
+    warnings.push('EVM wallet execution is disabled by environment.');
+  }
+  if (preferFlashLoan && !provider) {
+    warnings.push('No mapped flash-loan provider matches this chain and asset mix yet.');
+  }
+  if (preferFlashLoan && provider?.status !== 'mapped') {
+    warnings.push(`${provider.provider} is only at ${provider.status} stage for this route.`);
+  }
+  if (projectedNetUsd <= 0) {
+    warnings.push('Planner costs wipe out the current estimated spread.');
+  }
+  if (executor?.status !== 'active' && walletType === 'evm') {
+    warnings.push('EVM execution still needs router wiring before live broadcast.');
+  }
+  if (!preferFlashLoan && requiredCapitalUsd > CONFIG.maxExecutionUsd && opportunity.chainId === 'solana') {
+    warnings.push('Own-capital route exceeds the current live execution cap.');
+  }
+
+  let status = 'research';
+  if (opportunity.chainId === 'solana' && opportunity.executionSupported) {
+    status = preferFlashLoan ? 'atomic-later' : 'live-ready';
+  } else if (executor?.status === 'prepared' && projectedNetUsd > 0) {
+    status = 'plan-ready';
+  } else if (provider && projectedNetUsd > 0) {
+    status = 'sim-ready';
+  }
+
+  const capitalSource = preferFlashLoan ? 'flash-loan' : 'own-capital';
+  return {
+    id: `${opportunity.id}:${capitalSource}`,
+    createdAt: nowIso(),
+    opportunityId: opportunity.id,
+    symbol: opportunity.symbol,
+    chainId: opportunity.chainId,
+    chainName: opportunity.chainName,
+    buyDex: opportunity.buyDex,
+    sellDex: opportunity.sellDex,
+    qualityTier: opportunity.qualityTier,
+    qualityScore: opportunity.qualityScore,
+    quotedOpportunityNetUsd: round2(Number(opportunity.net || 0)),
+    requestedCapitalUsd,
+    requiredCapitalUsd,
+    capitalSource,
+    preferFlashLoan,
+    walletType,
+    chainHex: meta.chainHex,
+    nativeSymbol: meta.nativeSymbol,
+    recommendedWallets: plannerRecommendedWallets(opportunity.chainId),
+    routeProviders,
+    executorStatus: executor?.status || 'unknown',
+    plannerSupport: meta.plannerSupport,
+    flashLoanProvider: provider
+      ? {
+          id: provider.id,
+          provider: provider.provider,
+          feeBps: provider.feeBps,
+          maxBorrowUsd: provider.maxBorrowUsd,
+          status: provider.status,
+          settlement: provider.settlement,
+          notes: provider.notes,
+        }
+      : null,
+    flashLoanFeeUsd,
+    estimatedGasUsd,
+    plannerBufferUsd: plannerBuffer,
+    minRequiredNetUsd,
+    projectedNetUsd,
+    executableNow: opportunity.chainId === 'solana' && opportunity.executionSupported,
+    simulationReady: projectedNetUsd > 0 && (opportunity.executionSupported || executor?.status === 'prepared' || Boolean(provider)),
+    status,
+    statusLabel: plannerStatusLabel(status),
+    recommendedMode:
+      status === 'live-ready'
+        ? 'wallet-build'
+        : status === 'atomic-later'
+          ? 'advanced-sim'
+          : status === 'plan-ready' || status === 'sim-ready'
+            ? 'advanced-sim'
+            : 'paper',
+    steps: plannerStepsForOpportunity({
+      opportunity,
+      walletType,
+      preferFlashLoan,
+      provider,
+      routeProviders,
+      requiredCapitalUsd,
+    }),
+    warnings,
+  };
+}
+
+function buildAdvancedPlannerBoard(options = {}) {
+  const limit = clamp(
+    Number(options.limit || CONFIG.advancedPlannerLimit),
+    1,
+    25,
+  );
+  const selected = state.opportunities
+    .filter((item) => Number(item.net || 0) > 0)
+    .sort((a, b) => {
+      if (b.qualityScore !== a.qualityScore) {
+        return b.qualityScore - a.qualityScore;
+      }
+      return Number(b.net || 0) - Number(a.net || 0);
+    })
+    .slice(0, limit);
+  const items = selected.map((opportunity) =>
+    buildOpportunityExecutionPlan(opportunity, {
+      capitalUsd: options.capitalUsd,
+      preferFlashLoan:
+        options.preferFlashLoan != null ? options.preferFlashLoan : opportunity.flashLoanCandidate,
+    }),
+  );
+  return {
+    generatedAt: nowIso(),
+    summary: {
+      totalCandidates: items.length,
+      liveReadyCount: items.filter((item) => item.status === 'live-ready').length,
+      planReadyCount: items.filter((item) => item.status === 'plan-ready').length,
+      simReadyCount: items.filter((item) => item.status === 'sim-ready').length,
+      flashLoanReadyCount: items.filter(
+        (item) => item.capitalSource === 'flash-loan' && item.simulationReady,
+      ).length,
+      evmWalletCount: items.filter((item) => item.walletType === 'evm').length,
+    },
+    items,
+  };
 }
 
 function qualityTierFromScore(score) {
@@ -1840,6 +2368,14 @@ async function validateOpportunity(opportunity, options = {}) {
     };
   }
 
+  const plan = buildOpportunityExecutionPlan(opportunity, {
+    capitalUsd: options.usd,
+    preferFlashLoan:
+      options.preferFlashLoan != null
+        ? options.preferFlashLoan
+        : opportunity.flashLoanCandidate,
+  });
+
   if (opportunity.chainId === 'solana' && executor.quoteSupport) {
     try {
       return await validateSolanaOpportunity(opportunity, options);
@@ -1867,13 +2403,23 @@ async function validateOpportunity(opportunity, options = {}) {
     chainId: opportunity.chainId,
     chainName: opportunity.chainName,
     executorStatus: executor.status,
-    validationMode: 'executor-metadata',
-    status: executor.status === 'prepared' ? 'prepared' : 'discovery-only',
-    statusLabel: executor.status === 'prepared' ? 'Executor pending' : 'Discovery only',
+    validationMode: 'advanced-planner',
+    status: executor.status === 'prepared' || plan.status === 'sim-ready' ? 'prepared' : 'discovery-only',
+    statusLabel:
+      executor.status === 'prepared' || plan.status === 'sim-ready'
+        ? plan.statusLabel
+        : 'Discovery only',
     executable: false,
-    profitValidated: false,
-    warning: `${executor.chainName} scanner is live, but execution is not active on this chain yet.`,
-    recommendedMode: executor.status === 'prepared' ? 'wait-executor' : 'paper',
+    profitValidated: plan.projectedNetUsd > 0,
+    warning:
+      plan.warnings[0] ||
+      `${executor.chainName} scanner is live, but execution is not active on this chain yet.`,
+    recommendedMode: plan.recommendedMode,
+    projectedNetUsd: plan.projectedNetUsd,
+    minRequiredNetUsd: plan.minRequiredNetUsd,
+    walletType: plan.walletType,
+    capitalSource: plan.capitalSource,
+    flashLoanProvider: plan.flashLoanProvider?.provider || null,
   };
 }
 
@@ -2372,6 +2918,117 @@ async function handleDemoExecution(res, body) {
   });
 }
 
+function handleAdvancedPlan(res, body) {
+  const opportunity = findOpportunityForRequest(body);
+  if (!opportunity) {
+    sendJson(res, 404, {
+      ok: false,
+      error: 'Opportunity not found',
+    });
+    return;
+  }
+
+  const plan = buildOpportunityExecutionPlan(opportunity, {
+    capitalUsd: body.capitalUsd || body.usd,
+    preferFlashLoan: body.preferFlashLoan,
+  });
+  sendJson(res, 200, {
+    ok: true,
+    plan,
+  });
+}
+
+function handleAdvancedSimulation(res, body) {
+  const opportunity = findOpportunityForRequest(body);
+  if (!opportunity) {
+    sendJson(res, 404, {
+      ok: false,
+      error: 'Opportunity not found',
+    });
+    return;
+  }
+
+  const plan = buildOpportunityExecutionPlan(opportunity, {
+    capitalUsd: body.capitalUsd || body.usd,
+    preferFlashLoan: body.preferFlashLoan,
+  });
+  const swapUsdValue = Number(plan.requiredCapitalUsd || opportunity.capital || 0);
+  const guardrails = checkRiskGuardrails({
+    body,
+    opportunity,
+    swapUsdValue,
+    priceImpactPct: 0,
+    routePlan: routePlanFromOpportunity(opportunity),
+    mode: 'demo',
+  });
+
+  if (!guardrails.ok) {
+    const rejected = appendTradeLedger({
+      type: 'advanced-simulation',
+      mode: plan.capitalSource === 'flash-loan' ? 'demo-atomic' : 'demo-evm',
+      status: 'rejected',
+      success: false,
+      opportunityId: opportunity.id,
+      assetSymbol: opportunity.symbol,
+      inputSymbol: opportunity.symbol,
+      outputSymbol: opportunity.symbol,
+      quotedNotionalUsd: round2(swapUsdValue),
+      notionalUsd: round2(swapUsdValue),
+      quotedNetUsd: round2(Number(opportunity.net || 0)),
+      realizedNetUsd: null,
+      failureReason: guardrails.error,
+      routePlan: routePlanFromOpportunity(opportunity),
+      priceImpactPct: 0,
+    });
+    sendJson(res, guardrails.status, {
+      ok: false,
+      error: guardrails.error,
+      code: guardrails.code,
+      risk: guardrails.summary,
+      plan,
+      entry: rejected,
+    });
+    return;
+  }
+
+  recordAttemptCooldown(guardrails.cooldownKey);
+  state.lastExecutionAt = nowIso();
+  const success = Number(plan.projectedNetUsd || 0) > 0;
+  const entry = appendTradeLedger({
+    type: 'advanced-simulation',
+    mode: plan.capitalSource === 'flash-loan' ? 'demo-atomic' : 'demo-evm',
+    status: success ? 'simulated' : 'weak',
+    success,
+    opportunityId: opportunity.id,
+    assetSymbol: opportunity.symbol,
+    inputSymbol: opportunity.symbol,
+    outputSymbol: opportunity.symbol,
+    quotedNotionalUsd: round2(swapUsdValue),
+    notionalUsd: round2(swapUsdValue),
+    quotedNetUsd: round2(Number(opportunity.net || 0)),
+    realizedNetUsd: round2(Number(plan.projectedNetUsd || 0)),
+    validationStatus: plan.status,
+    validationLabel: plan.statusLabel,
+    failureReason: plan.warnings.join(' | ') || null,
+    routePlan: routePlanFromOpportunity(opportunity),
+    priceImpactPct: 0,
+    flashLoanProvider: plan.flashLoanProvider?.provider || null,
+  });
+  markExecutionView({
+    ...entry,
+    inputSymbol: opportunity.symbol,
+    outputSymbol: opportunity.symbol,
+    broadcastMode: entry.mode,
+  });
+  rebuildActivityViews();
+  sendJson(res, 200, {
+    ok: true,
+    plan,
+    entry,
+    risk: computeRiskSummary(),
+  });
+}
+
 function handleKillSwitchUpdate(res, body) {
   const enabled = Boolean(body.enabled);
   state.risk.killSwitch = enabled;
@@ -2670,9 +3327,32 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/execution/planner') {
+      const preferFlashLoanParam = url.searchParams.get('preferFlashLoan');
+      sendJson(res, 200, buildAdvancedPlannerBoard({
+        limit: url.searchParams.get('limit'),
+        capitalUsd: url.searchParams.get('capitalUsd'),
+        preferFlashLoan:
+          preferFlashLoanParam == null
+            ? undefined
+            : preferFlashLoanParam === 'true',
+      }));
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/strategies') {
       sendJson(res, 200, {
         items: listStrategyCapabilities(),
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/flash-loans/providers') {
+      sendJson(res, 200, {
+        items: FLASH_LOAN_PROVIDER_CATALOG.map((item) => ({
+          ...item,
+          walletType: plannerWalletType(item.chainId),
+        })),
       });
       return;
     }
@@ -2722,6 +3402,18 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/opportunities/demo-execute') {
       const body = await readBody(req);
       await handleDemoExecution(res, body);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/opportunities/advanced-plan') {
+      const body = await readBody(req);
+      handleAdvancedPlan(res, body);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/opportunities/advanced-simulate') {
+      const body = await readBody(req);
+      handleAdvancedSimulation(res, body);
       return;
     }
 
