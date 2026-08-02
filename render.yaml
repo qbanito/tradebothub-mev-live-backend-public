@@ -46,6 +46,16 @@ services:
         value: 15000
       - key: MIN_SPREAD_BPS
         value: 15
+      - key: MAX_SPREAD_BPS
+        value: 1200
+      - key: MIN_PAIR_LIQUIDITY_USD
+        value: 50000
+      - key: MIN_OPPORTUNITY_CAPITAL_USD
+        value: 250
+      - key: MAX_PAIRS_PER_TOKEN
+        value: 8
+      - key: MAX_MEDIAN_DEVIATION_BPS
+        value: 1500
       - key: DEFAULT_CAPITAL_USD
         value: 10000
       - key: ESTIMATED_COST_BPS
