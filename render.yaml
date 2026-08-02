@@ -60,3 +60,11 @@ services:
         value: 10000
       - key: ESTIMATED_COST_BPS
         value: 12
+      - key: MAX_MARKET_ROWS
+        value: 600
+      - key: MAX_OPPORTUNITIES
+        value: 250
+      - key: SCANNER_CHAIN_IDS
+        value: solana,ethereum,base,arbitrum,optimism,polygon,bsc,avalanche
+      - key: SCANNER_ASSET_KEYS
+        sync: false
