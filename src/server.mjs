@@ -828,6 +828,175 @@ const FLASH_LOAN_PROVIDER_CATALOG = [
   },
 ];
 
+const EVM_PRIVATE_LANE_CATALOG = [
+  {
+    id: 'flashbots-ethereum',
+    provider: 'Flashbots relay',
+    chainId: 'ethereum',
+    chainName: 'Ethereum',
+    status: 'mapped',
+    submissionMode: 'signed-bundle',
+    privacy: 'private bundle',
+    simulationSupport: true,
+    notes: 'Closest match to the classic searcher flow from the reviewed MEV repo.',
+  },
+  {
+    id: 'private-rpc-base',
+    provider: 'Private RPC lane',
+    chainId: 'base',
+    chainName: 'Base',
+    status: 'mapped',
+    submissionMode: 'private-rpc',
+    privacy: 'private mempool',
+    simulationSupport: false,
+    notes: 'Use private send plus local route replay while bundle-native flow matures.',
+  },
+  {
+    id: 'private-rpc-arbitrum',
+    provider: 'Private RPC lane',
+    chainId: 'arbitrum',
+    chainName: 'Arbitrum',
+    status: 'mapped',
+    submissionMode: 'private-rpc',
+    privacy: 'private mempool',
+    simulationSupport: false,
+    notes: 'Best current lane for Arbitrum router intents before a true bundle path is wired.',
+  },
+  {
+    id: 'private-rpc-polygon',
+    provider: 'Private RPC lane',
+    chainId: 'polygon',
+    chainName: 'Polygon',
+    status: POLYGON_DEPLOYMENT ? 'mapped' : 'research',
+    submissionMode: 'private-rpc',
+    privacy: 'private mempool',
+    simulationSupport: false,
+    notes: 'Pairs naturally with the deployed Polygon executor once router calldata is finalized.',
+  },
+  {
+    id: 'private-rpc-bsc',
+    provider: 'Private RPC lane',
+    chainId: 'bsc',
+    chainName: 'BNB Chain',
+    status: 'research',
+    submissionMode: 'private-rpc',
+    privacy: 'private mempool',
+    simulationSupport: false,
+    notes: 'Useful after Pancake-style router execution is fully wired.',
+  },
+];
+
+const EVM_MARKET_ADAPTER_CATALOG = [
+  {
+    id: 'uniswap-v3-router',
+    dex: 'uniswap',
+    chainIds: ['ethereum', 'base', 'arbitrum', 'polygon', 'bsc'],
+    family: 'amm-v3',
+    quoteMode: 'quoter+pool-state',
+    routerStyle: 'router-exact-input',
+    batchReadSupport: true,
+    privateRelayPreferred: true,
+    status: 'mapped',
+    notes: 'Best fit for private execution plus pool snapshotting across the main EVM chains we rank.',
+  },
+  {
+    id: 'sushiswap-v2-router',
+    dex: 'sushiswap',
+    chainIds: ['ethereum', 'polygon', 'arbitrum'],
+    family: 'amm-v2',
+    quoteMode: 'reserve-math',
+    routerStyle: 'pair-swap',
+    batchReadSupport: true,
+    privateRelayPreferred: true,
+    status: 'mapped',
+    notes: 'Directly matches the reusable reserve-based logic pattern from the reviewed Flashbots repo.',
+  },
+  {
+    id: 'pancakeswap-router',
+    dex: 'pancakeswap',
+    chainIds: ['bsc', 'base', 'arbitrum'],
+    family: 'amm-v2',
+    quoteMode: 'reserve-math',
+    routerStyle: 'pair-swap',
+    batchReadSupport: true,
+    privateRelayPreferred: true,
+    status: 'mapped',
+    notes: 'Good candidate for batch reserve reads and simple pair-level route simulation.',
+  },
+  {
+    id: 'quickswap-router',
+    dex: 'quickswap',
+    chainIds: ['polygon'],
+    family: 'amm-mixed',
+    quoteMode: 'router-quote',
+    routerStyle: 'router-exact-input',
+    batchReadSupport: true,
+    privateRelayPreferred: true,
+    status: 'mapped',
+    notes: 'Important Polygon fallback beside Uniswap and a natural fit for the current executor direction.',
+  },
+  {
+    id: 'aerodrome-router',
+    dex: 'aerodrome',
+    chainIds: ['base'],
+    family: 'amm-cl',
+    quoteMode: 'router/quoter',
+    routerStyle: 'router-exact-input',
+    batchReadSupport: false,
+    privateRelayPreferred: true,
+    status: 'mapped',
+    notes: 'Priority adapter for Base routes where concentrated liquidity matters more than pair math.',
+  },
+  {
+    id: 'camelot-router',
+    dex: 'camelot',
+    chainIds: ['arbitrum'],
+    family: 'amm-mixed',
+    quoteMode: 'router-quote',
+    routerStyle: 'router-exact-input',
+    batchReadSupport: false,
+    privateRelayPreferred: true,
+    status: 'mapped',
+    notes: 'Useful for Arbitrum routes that are not well served by Uniswap math alone.',
+  },
+  {
+    id: 'balancer-vault',
+    dex: 'balancer',
+    chainIds: ['ethereum', 'polygon'],
+    family: 'vault',
+    quoteMode: 'vault-query',
+    routerStyle: 'vault-swap',
+    batchReadSupport: false,
+    privateRelayPreferred: true,
+    status: 'research',
+    notes: 'Needs pool specialization handling, but it can materially improve execution quality on certain routes.',
+  },
+  {
+    id: 'curve-stableswap',
+    dex: 'curve',
+    chainIds: ['ethereum'],
+    family: 'stableswap',
+    quoteMode: 'pool-get-dy',
+    routerStyle: 'pool-exchange',
+    batchReadSupport: false,
+    privateRelayPreferred: true,
+    status: 'research',
+    notes: 'High-value for stable routes once the pool adapter is implemented chain by chain.',
+  },
+  {
+    id: 'custom-router',
+    dex: 'custom-router',
+    chainIds: ['ethereum', 'base', 'arbitrum', 'polygon', 'bsc'],
+    family: 'aggregator/custom',
+    quoteMode: 'custom-calldata',
+    routerStyle: 'allowlist-required',
+    batchReadSupport: false,
+    privateRelayPreferred: false,
+    status: 'research',
+    notes: 'Address-like route labels or custom routers need calldata templates and allowlist review first.',
+  },
+];
+
 const state = {
   market: [],
   opportunities: [],
@@ -1817,6 +1986,78 @@ function flashLoanProvidersForChain(chainId) {
   return FLASH_LOAN_PROVIDER_CATALOG.filter((item) => item.chainId === chainId);
 }
 
+function privateExecutionLanesForChain(chainId) {
+  return EVM_PRIVATE_LANE_CATALOG.filter((item) => item.chainId === chainId);
+}
+
+function normalizeDexKey(label) {
+  const value = String(label || '').trim().toLowerCase();
+  if (!value) {
+    return '';
+  }
+  if (/^0x[a-f0-9]{40}$/i.test(value)) {
+    return 'custom-router';
+  }
+  return value;
+}
+
+function selectMarketAdapter(chainId, dexLabel) {
+  const dex = normalizeDexKey(dexLabel);
+  if (!dex) {
+    return null;
+  }
+  return (
+    EVM_MARKET_ADAPTER_CATALOG.find(
+      (item) => item.dex === dex && item.chainIds.includes(chainId),
+    ) || null
+  );
+}
+
+function marketAdaptersForOpportunity(opportunity) {
+  if (!opportunity || opportunity.chainId === 'solana') {
+    return [];
+  }
+  return [
+    { role: 'buy', adapter: selectMarketAdapter(opportunity.chainId, opportunity.buyDex) },
+    { role: 'sell', adapter: selectMarketAdapter(opportunity.chainId, opportunity.sellDex) },
+  ]
+    .filter((item) => item.adapter)
+    .map((item) => ({
+      role: item.role,
+      id: item.adapter.id,
+      dex: item.adapter.dex,
+      family: item.adapter.family,
+      quoteMode: item.adapter.quoteMode,
+      routerStyle: item.adapter.routerStyle,
+      batchReadSupport: item.adapter.batchReadSupport,
+      privateRelayPreferred: item.adapter.privateRelayPreferred,
+      status: item.adapter.status,
+      notes: item.adapter.notes,
+    }));
+}
+
+function choosePrivateExecutionLane(opportunity, options = {}) {
+  if (!opportunity || opportunity.chainId === 'solana') {
+    return null;
+  }
+  const lanes = privateExecutionLanesForChain(opportunity.chainId);
+  if (!lanes.length) {
+    return null;
+  }
+  const preferSimulation = Boolean(options.preferSimulation);
+  const preferPrivacy = options.capitalSource === 'flash-loan' || Number(options.projectedNetUsd || 0) >= 15;
+  return (
+    lanes.find(
+      (item) =>
+        item.status === 'mapped' &&
+        (!preferSimulation || item.simulationSupport) &&
+        (!preferPrivacy || item.privacy),
+    ) ||
+    lanes.find((item) => item.status === 'mapped') ||
+    lanes[0]
+  );
+}
+
 function routePlanFromOpportunity(opportunity) {
   return [opportunity.buyDex, opportunity.sellDex]
     .filter(Boolean)
@@ -2030,6 +2271,16 @@ function buildExecutionRealitySimulation(opportunity, plan, reference, swapUsdVa
   if (plan.flashLoanProvider?.status === 'mapped') {
     confidencePct += 5;
   }
+  if (plan.privateRelay?.status === 'mapped') {
+    confidencePct += 6;
+  } else if (plan.walletType === 'evm') {
+    confidencePct -= 8;
+  }
+  if (plan.adapterCoverageReady) {
+    confidencePct += 5;
+  } else if (plan.walletType === 'evm') {
+    confidencePct -= 10;
+  }
   if (plan.walletType === 'evm' && EXECUTOR_REGISTRY[opportunity.chainId]?.status !== 'active') {
     confidencePct -= 15;
   }
@@ -2047,6 +2298,12 @@ function buildExecutionRealitySimulation(opportunity, plan, reference, swapUsdVa
   }
   if (plan.capitalSource === 'flash-loan') {
     realismWarnings.push('Flash-loan execution is still contract-planned here, so this simulation includes execution drag reserves instead of a deployed atomic callback.');
+  }
+  if (plan.walletType === 'evm' && !plan.privateRelay) {
+    realismWarnings.push('No private submission lane is mapped for this chain yet, so public mempool leakage would still be a real execution risk.');
+  }
+  if (plan.walletType === 'evm' && !plan.adapterCoverageReady) {
+    realismWarnings.push('At least one route leg is still missing a fully mapped EVM adapter, so route assembly is less reliable than the headline spread suggests.');
   }
   if (plan.walletType === 'evm' && EXECUTOR_REGISTRY[opportunity.chainId]?.status !== 'active') {
     realismWarnings.push('EVM routing is not live yet, so MEV and route-expiry penalties are modeled rather than observed.');
@@ -2134,6 +2391,8 @@ function plannerStepsForOpportunity({
   walletType,
   preferFlashLoan,
   provider,
+  privateLane,
+  adapters,
   routeProviders,
   requiredCapitalUsd,
 }) {
@@ -2163,6 +2422,13 @@ function plannerStepsForOpportunity({
     detail: `Use ${plannerRecommendedWallets(opportunity.chainId).join(' or ')} on ${opportunity.chainName}.`,
   });
   steps.push({
+    stage: 'market-data',
+    title: 'Snapshot route state',
+    detail: adapters.length
+      ? `Read ${adapters.map((item) => `${item.role}:${item.dex}`).join(', ')} using ${adapters.some((item) => item.batchReadSupport) ? 'batch reserve or pool snapshots' : 'router-level quote calls'}.`
+      : `No EVM adapter is mapped yet for ${opportunity.buyDex} -> ${opportunity.sellDex}.`,
+  });
+  steps.push({
     stage: 'planner',
     title: 'Assemble route intent',
     detail: `Route through ${routeProviders.join(', ')} without crossing chains.`,
@@ -2187,6 +2453,20 @@ function plannerStepsForOpportunity({
     stage: 'capital',
     title: 'Fund own-capital route',
     detail: `Planner expects about ${round2(requiredCapitalUsd)} USD of wallet capital on ${opportunity.chainName}.`,
+  });
+  steps.push({
+    stage: 'simulation',
+    title: 'Replay before send',
+    detail: privateLane?.simulationSupport
+      ? `${privateLane.provider} can simulate the transaction shape before private submission.`
+      : 'Local route replay is still needed before private submission on this chain.',
+  });
+  steps.push({
+    stage: 'privacy',
+    title: 'Submit through private lane',
+    detail: privateLane
+      ? `${privateLane.provider} (${privateLane.submissionMode}) is the current preferred private lane.`
+      : 'No private lane is mapped yet, so public mempool leakage would still be a risk.',
   });
   steps.push({
     stage: 'settlement',
@@ -2231,10 +2511,37 @@ function buildOpportunityExecutionPlan(opportunity, options = {}) {
     Number(opportunity.net || 0) - flashLoanFeeUsd - estimatedGasUsd - plannerBuffer,
   );
   const routeProviders = meta.routeProviders || [executor?.routeProvider || 'planned'];
+  const adapters = marketAdaptersForOpportunity(opportunity);
+  const adapterCoverageReady =
+    walletType === 'solana'
+      ? true
+      : adapters.length >= 2 && adapters.every((item) => item.status === 'mapped');
+  const batchReadReady =
+    walletType === 'solana'
+      ? true
+      : adapters.length >= 1 && adapters.every((item) => item.batchReadSupport || item.status === 'mapped');
+  const privateLane = choosePrivateExecutionLane(opportunity, {
+    capitalSource: preferFlashLoan ? 'flash-loan' : 'own-capital',
+    projectedNetUsd,
+    preferSimulation: preferFlashLoan,
+  });
+  const privateSubmitReady =
+    walletType === 'solana'
+      ? true
+      : Boolean(privateLane && privateLane.status === 'mapped');
   const warnings = [];
 
   if (walletType === 'evm' && !CONFIG.evmWalletExecutionEnabled) {
     warnings.push('EVM wallet execution is disabled by environment.');
+  }
+  if (walletType === 'evm' && !adapters.length) {
+    warnings.push('No mapped EVM market adapters match this route yet.');
+  }
+  if (walletType === 'evm' && adapters.some((item) => item.status !== 'mapped')) {
+    warnings.push('Part of this EVM route still depends on research-stage adapters.');
+  }
+  if (walletType === 'evm' && !privateLane) {
+    warnings.push('No private submission lane is mapped for this chain yet.');
   }
   if (preferFlashLoan && !provider) {
     warnings.push('No mapped flash-loan provider matches this chain and asset mix yet.');
@@ -2255,9 +2562,9 @@ function buildOpportunityExecutionPlan(opportunity, options = {}) {
   let status = 'research';
   if (opportunity.chainId === 'solana' && opportunity.executionSupported) {
     status = preferFlashLoan ? 'atomic-later' : 'live-ready';
-  } else if (executor?.status === 'prepared' && projectedNetUsd > 0) {
+  } else if (executor?.status === 'prepared' && projectedNetUsd > 0 && adapterCoverageReady) {
     status = 'plan-ready';
-  } else if (provider && projectedNetUsd > 0) {
+  } else if ((provider || privateLane || adapters.length) && projectedNetUsd > 0) {
     status = 'sim-ready';
   }
 
@@ -2283,8 +2590,23 @@ function buildOpportunityExecutionPlan(opportunity, options = {}) {
     nativeSymbol: meta.nativeSymbol,
     recommendedWallets: plannerRecommendedWallets(opportunity.chainId),
     routeProviders,
+    marketAdapters: adapters,
+    adapterCoverageReady,
+    batchReadReady,
     executorStatus: executor?.status || 'unknown',
     plannerSupport: meta.plannerSupport,
+    privateRelay: privateLane
+      ? {
+          id: privateLane.id,
+          provider: privateLane.provider,
+          status: privateLane.status,
+          submissionMode: privateLane.submissionMode,
+          privacy: privateLane.privacy,
+          simulationSupport: privateLane.simulationSupport,
+          notes: privateLane.notes,
+        }
+      : null,
+    privateSubmitReady,
     flashLoanProvider: provider
       ? {
           id: provider.id,
@@ -2302,7 +2624,15 @@ function buildOpportunityExecutionPlan(opportunity, options = {}) {
     minRequiredNetUsd,
     projectedNetUsd,
     executableNow: opportunity.chainId === 'solana' && opportunity.executionSupported,
-    simulationReady: projectedNetUsd > 0 && (opportunity.executionSupported || executor?.status === 'prepared' || Boolean(provider)),
+    simulationReady:
+      projectedNetUsd > 0 &&
+      (
+        opportunity.executionSupported ||
+        executor?.status === 'prepared' ||
+        Boolean(provider) ||
+        adapterCoverageReady ||
+        privateSubmitReady
+      ),
     status,
     statusLabel: plannerStatusLabel(status),
     recommendedMode:
@@ -2318,6 +2648,8 @@ function buildOpportunityExecutionPlan(opportunity, options = {}) {
       walletType,
       preferFlashLoan,
       provider,
+      privateLane,
+      adapters,
       routeProviders,
       requiredCapitalUsd,
     }),
@@ -2358,6 +2690,8 @@ function buildAdvancedPlannerBoard(options = {}) {
         (item) => item.capitalSource === 'flash-loan' && item.simulationReady,
       ).length,
       evmWalletCount: items.filter((item) => item.walletType === 'evm').length,
+      privateLaneReadyCount: items.filter((item) => item.privateSubmitReady).length,
+      adapterCoverageReadyCount: items.filter((item) => item.adapterCoverageReady).length,
     },
     items,
   };
@@ -4071,6 +4405,26 @@ const server = http.createServer(async (req, res) => {
         items: FLASH_LOAN_PROVIDER_CATALOG.map((item) => ({
           ...item,
           walletType: plannerWalletType(item.chainId),
+        })),
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/evm/private-lanes') {
+      sendJson(res, 200, {
+        items: EVM_PRIVATE_LANE_CATALOG.map((item) => ({
+          ...item,
+          walletType: 'evm',
+        })),
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/evm/market-adapters') {
+      sendJson(res, 200, {
+        items: EVM_MARKET_ADAPTER_CATALOG.map((item) => ({
+          ...item,
+          walletType: 'evm',
         })),
       });
       return;
