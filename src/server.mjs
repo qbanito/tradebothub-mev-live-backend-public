@@ -1555,7 +1555,7 @@ function buildOpportunityExecutionPlan(opportunity, options = {}) {
   if (preferFlashLoan && !provider) {
     warnings.push('No mapped flash-loan provider matches this chain and asset mix yet.');
   }
-  if (preferFlashLoan && provider?.status !== 'mapped') {
+  if (preferFlashLoan && provider && provider.status !== 'mapped') {
     warnings.push(`${provider.provider} is only at ${provider.status} stage for this route.`);
   }
   if (projectedNetUsd <= 0) {
