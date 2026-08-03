@@ -1048,6 +1048,26 @@ async function persistRuntimeState() {
   }
 }
 
+function resetRuntimeState(options = {}) {
+  const clearShadow = Boolean(options.clearShadow);
+  state.tradeLedger = [];
+  state.executions = [];
+  state.transactions = [];
+  state.arbitrages = [];
+  state.risk.killSwitch = CONFIG.guardrailKillSwitch;
+  state.risk.killSwitchReason = CONFIG.guardrailKillSwitch
+    ? 'Enabled from environment'
+    : null;
+  state.risk.lastAttemptByKey = {};
+  if (clearShadow) {
+    state.shadow.pending = [];
+    state.shadow.history = [];
+    state.shadow.lastSweepAt = null;
+  }
+  state.lastExecutionAt = null;
+  rebuildActivityViews();
+}
+
 function isStableSymbol(symbol) {
   return ['USDC', 'USDT', 'DAI', 'USD'].includes(String(symbol || '').toUpperCase());
 }
@@ -3721,6 +3741,26 @@ function handleKillSwitchUpdate(res, body) {
   });
 }
 
+async function handleRuntimeReset(res, body) {
+  resetRuntimeState({
+    clearShadow: Boolean(body.clearShadow),
+  });
+  await persistRuntimeState();
+  sendJson(res, 200, {
+    ok: true,
+    resetAt: nowIso(),
+    cleared: {
+      tradeLedger: true,
+      executions: true,
+      transactions: true,
+      arbitrages: true,
+      cooldowns: true,
+      shadow: Boolean(body.clearShadow),
+    },
+    risk: computeRiskSummary(),
+  });
+}
+
 async function handleExecutionQuote(res, body) {
   const context = await buildExecutionContext(body);
   sendJson(res, 200, {
@@ -4072,6 +4112,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/admin/scan') {
       await scanMarket();
       sendJson(res, 200, { ok: true, lastScanAt: state.lastScanAt });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/admin/runtime-reset') {
+      const body = await readBody(req);
+      await handleRuntimeReset(res, body);
       return;
     }
 
