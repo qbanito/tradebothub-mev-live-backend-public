@@ -1,5 +1,6 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { URL } from 'node:url';
@@ -306,6 +307,16 @@ const CONFIG = {
   maxOpportunities: envNumber('MAX_OPPORTUNITIES', 250),
   solanaRpcUrl:
     process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
+  polygonRpcUrl: process.env.POLYGON_RPC_URL || '',
+  polygonChainId: envNumber('POLYGON_CHAIN_ID', 137),
+  polygonAavePoolAddressesProvider:
+    process.env.POLYGON_AAVE_POOL_ADDRESSES_PROVIDER ||
+    '0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb',
+  polygonAavePool:
+    process.env.POLYGON_AAVE_POOL || '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
+  polygonFlashExecutorOwner: process.env.POLYGON_FLASH_EXECUTOR_OWNER || '',
+  polygonFlashExecutorAddress: process.env.POLYGON_FLASH_EXECUTOR_ADDRESS || '',
+  polygonExecutorApprovedTargets: csv(process.env.POLYGON_EXECUTOR_APPROVED_TARGETS || ''),
   heliusApiKey: process.env.HELIUS_API_KEY || '',
   heliusSenderUrl:
     process.env.HELIUS_SENDER_URL || 'http://ewr-sender.helius-rpc.com/fast',
@@ -344,6 +355,12 @@ const CONFIG = {
   executionBlacklistDexes: csv(process.env.EXECUTION_BLACKLIST_DEXES || ''),
   indexerLookbackLimit: envNumber('INDEXER_LOOKBACK_LIMIT', 100),
 };
+
+const POLYGON_MAINNET_MANIFEST = readJsonSync(
+  new URL('../contracts/deployments/polygon-mainnet.json', import.meta.url),
+);
+
+const POLYGON_DEPLOYMENT = resolvePolygonDeployment();
 
 const SCANNER_CHAIN_IDS = new Set(
   csv(process.env.SCANNER_CHAIN_IDS || '').length
@@ -444,14 +461,16 @@ const EXECUTOR_REGISTRY = {
   polygon: {
     chainId: 'polygon',
     chainName: 'Polygon',
-    status: 'discovery',
+    status: POLYGON_DEPLOYMENT ? 'prepared' : 'discovery',
     quoteSupport: false,
     buildSupport: false,
     executeSupport: false,
-    walletSupport: false,
-    flashLoanStage: 'planned',
-    routeProvider: 'planned',
-    notes: 'Planner is active and the local Aave V3 contract scaffold is ready, but Polygon deployment and router wiring are still pending.',
+    walletSupport: Boolean(POLYGON_DEPLOYMENT),
+    flashLoanStage: POLYGON_DEPLOYMENT ? 'deployed' : 'planned',
+    routeProvider: POLYGON_DEPLOYMENT ? 'Aave V3 flash executor' : 'planned',
+    notes: POLYGON_DEPLOYMENT
+      ? `Polygon mainnet executor is deployed at ${POLYGON_DEPLOYMENT.contractAddress}, but live EVM route build/sign wiring is still being finished.`
+      : 'Planner is active and the local Aave V3 contract scaffold is ready, but Polygon deployment and router wiring are still pending.',
   },
   avalanche: {
     chainId: 'avalanche',
@@ -516,7 +535,7 @@ const STRATEGY_CATALOG = [
     flashLoan: true,
     atomic: true,
     requiresOwnCapital: false,
-    description: 'Scaffolding and readiness metadata only. Real flash-loan contracts are not deployed yet.',
+    description: 'Polygon now has the first deployed executor. The broader multi-chain flash-loan router is still being wired chain by chain.',
   },
 ];
 
@@ -596,13 +615,13 @@ const CHAIN_PLANNER_META = {
   polygon: {
     walletType: 'evm',
     recommendedWallets: ['MetaMask', 'Rabby'],
-    nativeSymbol: 'MATIC',
+    nativeSymbol: 'POL',
     chainHex: '0x89',
     routeProviders: ['QuickSwap', 'Uniswap v3'],
     plannerSupport: true,
     gasUsd: { wallet: 0.55, atomic: 2.9 },
     bufferUsd: 2.5,
-    flashLoanReady: false,
+    flashLoanReady: Boolean(POLYGON_DEPLOYMENT),
     atomicReady: false,
   },
   avalanche: {
@@ -875,6 +894,79 @@ function csv(value) {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function cleanAddress(value) {
+  return String(value || '').trim();
+}
+
+function cleanHash(value) {
+  return String(value || '').trim();
+}
+
+function readJsonSync(fileUrl) {
+  try {
+    return JSON.parse(fsSync.readFileSync(fileUrl, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function resolvePolygonDeployment() {
+  const manifest = POLYGON_MAINNET_MANIFEST || {};
+  const executor = manifest.executor || {};
+  const contractAddress =
+    cleanAddress(CONFIG.polygonFlashExecutorAddress) ||
+    cleanAddress(executor.deployedAddress);
+  if (!contractAddress) {
+    return null;
+  }
+  const owner =
+    cleanAddress(CONFIG.polygonFlashExecutorOwner) ||
+    cleanAddress(executor.owner);
+  const approvedTargets = (
+    CONFIG.polygonExecutorApprovedTargets.length
+      ? CONFIG.polygonExecutorApprovedTargets
+      : Array.isArray(executor.approvedTargets)
+        ? executor.approvedTargets
+        : []
+  )
+    .map((item) => cleanAddress(item))
+    .filter(Boolean);
+  const deploymentTxHash =
+    cleanHash(executor.deploymentTxHash) ||
+    cleanHash(manifest.deploymentTxHash);
+  const explorerUrl =
+    String(executor.explorerUrl || '').trim() ||
+    `https://polygon.blockscout.com/address/${contractAddress}?tab=contract`;
+  const txUrl =
+    String(executor.txUrl || '').trim() ||
+    (deploymentTxHash
+      ? `https://polygon.blockscout.com/tx/${deploymentTxHash}`
+      : '');
+  const verifiedUrl = String(executor.verifiedUrl || '').trim() || '';
+  return {
+    chainId: String(manifest.chainId || CONFIG.polygonChainId || 137),
+    chainName: manifest.chainName || 'Polygon',
+    contractName: executor.contractName || 'PolygonAaveFlashExecutor',
+    contractAddress,
+    owner,
+    deploymentTxHash,
+    approvedTargets,
+    explorerUrl,
+    txUrl,
+    verifiedUrl,
+    deployedAt: String(executor.deployedAt || '').trim() || null,
+    status: approvedTargets.length ? 'deployed' : 'deployed-needs-allowlist',
+    statusLabel: approvedTargets.length ? 'Deployed' : 'Deployed / allowlist pending',
+  };
+}
+
+function executorDeploymentForChain(chainId) {
+  if (chainId === 'polygon') {
+    return POLYGON_DEPLOYMENT;
+  }
+  return null;
 }
 
 function nowIso() {
@@ -1658,6 +1750,7 @@ function deviationBps(value, baseline) {
 function listExecutorCapabilities(solanaLiveReady = false) {
   return Object.values(EXECUTOR_REGISTRY).map((executor) => {
     const meta = chainPlannerMeta(executor.chainId);
+    const deployment = executorDeploymentForChain(executor.chainId);
     return {
       ...executor,
       liveReady: executor.chainId === 'solana' ? solanaLiveReady : false,
@@ -1669,6 +1762,7 @@ function listExecutorCapabilities(solanaLiveReady = false) {
       flashLoanReady: meta.flashLoanReady,
       atomicReady: meta.atomicReady,
       flashLoanProviders: flashLoanProvidersForChain(executor.chainId).length,
+      deployment,
     };
   });
 }

@@ -9,12 +9,17 @@
   "executor": {
     "contractName": "PolygonAaveFlashExecutor",
     "owner": "0xa617cc0998c0bc4bf86301003ff2c172d57b506e",
-    "deployedAddress": "",
+    "deployedAddress": "0xE7dd4F06fA9880d10cA29C531B23D575ddAc7Dd1",
+    "deploymentTxHash": "0x4ae46907a1ff4ab654065adbb6710cad36b6126ed3821b99aca2b53626444181",
+    "deployedAt": "2026-08-03T02:27:46Z",
+    "explorerUrl": "https://polygon.blockscout.com/address/0xE7dd4F06fA9880d10cA29C531B23D575ddAc7Dd1?tab=contract",
+    "txUrl": "https://polygon.blockscout.com/tx/0x4ae46907a1ff4ab654065adbb6710cad36b6126ed3821b99aca2b53626444181",
+    "verifiedUrl": "https://repo.sourcify.dev/137/0xE7dd4F06fA9880d10cA29C531B23D575ddAc7Dd1/",
     "approvedTargets": []
   },
   "notes": [
     "PoolAddressesProvider and Pool values are sourced from Aave official docs and address book.",
-    "Fill owner and approvedTargets before deployment.",
-    "Do not treat this file as proof of live deployment."
+    "Mainnet deployment completed on August 3, 2026 via Remix + MetaMask.",
+    "Keep approvedTargets empty until every downstream router target is reviewed and allowlisted."
   ]
 }

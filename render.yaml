@@ -64,6 +64,20 @@ services:
         value: 25000
       - key: EVM_WALLET_EXECUTION_ENABLED
         value: true
+      - key: POLYGON_CHAIN_ID
+        value: 137
+      - key: POLYGON_AAVE_POOL_ADDRESSES_PROVIDER
+        value: 0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb
+      - key: POLYGON_AAVE_POOL
+        value: 0x794a61358D6845594F94dc1DB02A252b5b4814aD
+      - key: POLYGON_FLASH_EXECUTOR_OWNER
+        value: 0xa617cc0998c0bc4bf86301003ff2c172d57b506e
+      - key: POLYGON_FLASH_EXECUTOR_ADDRESS
+        value: 0xE7dd4F06fA9880d10cA29C531B23D575ddAc7Dd1
+      - key: POLYGON_RPC_URL
+        sync: false
+      - key: POLYGON_EXECUTOR_APPROVED_TARGETS
+        sync: false
       - key: TRADE_LEDGER_MAX_ENTRIES
         value: 500
       - key: TRADE_LEDGER_PATH

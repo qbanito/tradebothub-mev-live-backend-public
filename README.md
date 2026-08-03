@@ -19,7 +19,7 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - Flash-loan provider catalog with fee, borrow-size, and readiness metadata.
 - Advanced simulation endpoint that writes planner-stage results into the trade ledger.
 - Frontend-ready EVM wallet planning support and advanced route selection flow.
-- A first Polygon contract workspace scaffold for an Aave V3 flash-loan executor under `contracts/`.
+- A first Polygon contract workspace scaffold for an Aave V3 flash-loan executor under `contracts/`, now updated with the latest mainnet deployment metadata.
 
 ## Still true from v3.4
 
@@ -118,11 +118,11 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - The API does not infer realized arbitrage profit from rough route estimates.
 - A successful quote is not a profit guarantee.
 - Demo execution uses live quote validation and records a simulated realized result. It is not an on-chain fill.
-- Advanced planner and flash-loan simulation provide execution planning metadata, not deployed atomic flash-loan contracts.
+- Advanced planner and flash-loan simulation provide execution planning metadata. Polygon now has a deployed executor, but router calldata generation and allowlisted live targets still need to be wired before production use.
 - Live execution stays blocked until mode, flags, signer, and broadcast prerequisites are all satisfied.
 - Wallet-connected execution is the recommended path when you want the browser frontend to sign locally instead of storing a private key in Render.
-- Multi-chain opportunities are discovery-only unless you add a real executor for that chain. The built-in executor flow remains Solana-focused.
-- The Polygon contract scaffold is only a starting point. You still need audited router calldata generation, whitelisted targets, and a real deployment before sending mainnet value through it.
+- Multi-chain opportunities are discovery-only unless you add a real executor for that chain. The built-in quote/build/send flow remains Solana-focused even though Polygon now has a deployed executor contract.
+- The Polygon contract is deployed on Polygon mainnet at `0xE7dd4F06fA9880d10cA29C531B23D575ddAc7Dd1` with deployment transaction `0x4ae46907a1ff4ab654065adbb6710cad36b6126ed3821b99aca2b53626444181`, but you still need audited router calldata generation and whitelisted targets before sending real mainnet value through it.
 - If `TRADE_LEDGER_PATH` points to `/tmp`, the ledger is runtime-local and can be lost after restart or redeploy.
 
 ## Polygon contract path
@@ -130,14 +130,14 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 If we start with Polygon, the backend repo now includes `contracts/` as the first EVM contract workspace.
 
 - `contracts/src/PolygonAaveFlashExecutor.sol` is a minimal owner-controlled flash-loan receiver built around Aave V3 `flashLoanSimple()`.
-- `contracts/deployments/polygon-mainnet.json` stores the Polygon market config and deployment placeholders.
+- `contracts/deployments/polygon-mainnet.json` stores the Polygon market config plus the latest confirmed mainnet deployment metadata.
 - `contracts/deployments/polygon-amoy.json` stores the testnet-first staging manifest.
 - `contracts/deployments/polygon-fork.json` stores the preferred fork-validation manifest.
 - `contracts/DEPLOYMENT_PLAN.md` documents the recommended `testnet -> mainnet` rollout.
 - `contracts/REMIX_DEPLOY.md` documents a MetaMask + Remix deployment path for Polygon.
 - `contracts/RUNBOOK.md` gives the operator checklist for Amoy, fork, and mainnet.
 - `contracts/scripts/` provides shell entry points for deploy and allowlist steps once the EVM toolchain and secrets are available.
-- The planner can treat Polygon as a flash-loan simulation path, but this does not mean the executor is deployed or live.
+- As of August 3, 2026, the first Polygon mainnet executor deployment is recorded in this repo and verified on Blockscout/Sourcify, but the end-to-end wallet router flow is still being finished.
 - As of August 3, 2026, this repo has confirmed official Polygon mainnet Aave references, but not a confirmed public Aave Polygon Amoy deployment reference.
 
 ## Scanner tuning
