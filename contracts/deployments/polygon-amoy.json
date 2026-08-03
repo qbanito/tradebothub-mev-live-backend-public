@@ -1,0 +1,21 @@
+{
+  "chainId": 80002,
+  "chainName": "Polygon Amoy",
+  "network": "testnet",
+  "aaveV3": {
+    "poolAddressesProvider": "",
+    "pool": "",
+    "confirmedOfficial": false
+  },
+  "executor": {
+    "contractName": "PolygonAaveFlashExecutor",
+    "owner": "",
+    "deployedAddress": "",
+    "approvedTargets": []
+  },
+  "notes": [
+    "Use this as the staging manifest before Polygon mainnet.",
+    "As of August 3, 2026, an official Aave public addresses reference for Polygon Amoy has not been confirmed in this repo.",
+    "Do not fill production assumptions here until the flash-liquidity source is verified."
+  ]
+}
