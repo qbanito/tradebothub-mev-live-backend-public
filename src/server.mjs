@@ -1722,6 +1722,22 @@ function sendText(res, status, text) {
   res.end(text);
 }
 
+async function readJsonOrText(response) {
+  const raw = await response.text();
+  const text = raw.trim();
+  if (!text) {
+    return {};
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      error: text,
+      raw: text,
+    };
+  }
+}
+
 function corsHeaders() {
   return {
     'access-control-allow-origin': CONFIG.corsOrigin,
@@ -3392,9 +3408,13 @@ async function fetchSwapQuote({
   const response = await fetch(url, {
     headers: getSwapHeaders(),
   });
-  const payload = await response.json();
+  const payload = await readJsonOrText(response);
   if (!response.ok) {
-    throw new Error(payload.error || `Quote failed with ${response.status}`);
+    const message = String(payload.error || payload.raw || `Quote failed with ${response.status}`).trim();
+    if (response.status === 429 || /rate limit/i.test(message)) {
+      throw new Error('Live quote provider rate limited this request. Wait a few seconds and try again.');
+    }
+    throw new Error(message || `Quote failed with ${response.status}`);
   }
   return payload;
 }
@@ -3419,9 +3439,13 @@ async function buildSwapTransaction(quoteResponse, userPublicKey) {
       },
     }),
   });
-  const payload = await response.json();
+  const payload = await readJsonOrText(response);
   if (!response.ok) {
-    throw new Error(payload.error || `Swap build failed with ${response.status}`);
+    const message = String(payload.error || payload.raw || `Swap build failed with ${response.status}`).trim();
+    if (response.status === 429 || /rate limit/i.test(message)) {
+      throw new Error('Swap builder provider rate limited this request. Wait a few seconds and try again.');
+    }
+    throw new Error(message || `Swap build failed with ${response.status}`);
   }
   return payload;
 }
