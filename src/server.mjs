@@ -296,6 +296,9 @@ const CONFIG = {
   executionMode: (process.env.EXECUTION_MODE || 'paper').toLowerCase(),
   liveTradingEnabled: envBool('LIVE_TRADING_ENABLED', false),
   pollIntervalMs: envNumber('POLL_INTERVAL_MS', 15000),
+  dexScreenerCacheMs: envNumber('DEXSCREENER_CACHE_MS', 120000),
+  dexScreenerCooldownMs: envNumber('DEXSCREENER_COOLDOWN_MS', 45000),
+  dexScreenerConcurrency: envNumber('DEXSCREENER_CONCURRENCY', 4),
   minSpreadBps: envNumber('MIN_SPREAD_BPS', 15),
   maxSpreadBps: envNumber('MAX_SPREAD_BPS', 1200),
   minPairLiquidityUsd: envNumber('MIN_PAIR_LIQUIDITY_USD', 50000),
@@ -1122,7 +1125,10 @@ const state = {
 const sseClients = new Set();
 const tokenCache = new Map();
 const validationCache = new Map();
+const dexScreenerPairCache = new Map();
 let signerCache;
+let dexScreenerCooldownUntil = 0;
+let dexScreenerLastRateLimitLogAt = 0;
 
 const connection = new Connection(CONFIG.solanaRpcUrl, 'confirmed');
 
@@ -2105,18 +2111,79 @@ async function resolveToken(query, fallbackDecimals = null) {
 }
 
 async function fetchTokenPairs(asset) {
+  const cacheKey = `${asset.chainId}:${asset.address}`;
+  const cached = dexScreenerPairCache.get(cacheKey);
+  const now = Date.now();
+  const cacheIsFresh =
+    cached &&
+    now - cached.fetchedAt <= Number(CONFIG.dexScreenerCacheMs || 0);
+
+  if (cacheIsFresh) {
+    return cached.pairs;
+  }
+
+  if (dexScreenerCooldownUntil > now) {
+    if (cached?.pairs?.length) {
+      return cached.pairs;
+    }
+    return [];
+  }
+
   const url = `https://api.dexscreener.com/latest/dex/tokens/${asset.address}`;
   const response = await fetch(url, { headers: { accept: 'application/json' } });
   if (!response.ok) {
+    if (response.status === 429) {
+      dexScreenerCooldownUntil = Date.now() + Number(CONFIG.dexScreenerCooldownMs || 0);
+      state.indexer = {
+        status: 'degraded',
+        source: 'dexscreener-cache',
+      };
+      if (Date.now() - dexScreenerLastRateLimitLogAt > 5000) {
+        dexScreenerLastRateLimitLogAt = Date.now();
+        logError(
+          'DexScreener rate limit hit; using cached scanner data where available',
+          `cooldown_ms=${CONFIG.dexScreenerCooldownMs}`,
+        );
+      }
+      if (cached?.pairs?.length) {
+        return cached.pairs;
+      }
+      return [];
+    }
     throw new Error(`DexScreener ${response.status}`);
   }
   const payload = await response.json();
   const pairs = Array.isArray(payload.pairs) ? payload.pairs : [];
-  return pairs
+  const normalized = pairs
     .filter((pair) => pair.chainId === asset.chainId)
     .filter((pair) => Number(pair.priceUsd) > 0 && Number(pair.liquidity?.usd || 0) > 0)
     .map((pair) => normalizePair(asset, pair))
     .sort((a, b) => b.liquidity - a.liquidity);
+  dexScreenerPairCache.set(cacheKey, {
+    fetchedAt: now,
+    pairs: normalized,
+  });
+  return normalized;
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(Number(limit || 1), items.length || 1));
+
+  async function worker() {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) {
+        return;
+      }
+      results[index] = await mapper(items[index], index);
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
 }
 
 function normalizePair(asset, pair) {
@@ -3435,7 +3502,18 @@ function rebuildActivityViews() {
 
 async function scanMarket() {
   try {
-    const results = await Promise.all(SCANNER_ASSETS.map((asset) => fetchTokenPairs(asset)));
+    const results = await mapWithConcurrency(
+      SCANNER_ASSETS,
+      CONFIG.dexScreenerConcurrency,
+      async (asset) => {
+        try {
+          return await fetchTokenPairs(asset);
+        } catch (error) {
+          logError(`Pair fetch failed for ${asset.chainId}:${asset.symbol}`, error);
+          return [];
+        }
+      },
+    );
     state.market = results
       .flat()
       .sort((a, b) => b.liquidity - a.liquidity)
@@ -3444,6 +3522,17 @@ async function scanMarket() {
     evaluatePendingShadowCandidates();
     queueShadowCandidates();
     state.lastScanAt = nowIso();
+    if (dexScreenerCooldownUntil > Date.now()) {
+      state.indexer = {
+        status: 'degraded',
+        source: 'dexscreener-cache',
+      };
+    } else {
+      state.indexer = {
+        status: 'active',
+        source: 'dexscreener-live',
+      };
+    }
     broadcastSnapshot();
   } catch (error) {
     logError('Market scan failed', error);

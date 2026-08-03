@@ -100,6 +100,12 @@ services:
         value: false
       - key: POLL_INTERVAL_MS
         value: 15000
+      - key: DEXSCREENER_CACHE_MS
+        value: 120000
+      - key: DEXSCREENER_COOLDOWN_MS
+        value: 45000
+      - key: DEXSCREENER_CONCURRENCY
+        value: 4
       - key: MIN_SPREAD_BPS
         value: 15
       - key: MAX_SPREAD_BPS
