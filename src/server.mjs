@@ -615,6 +615,97 @@ const CHAIN_PLANNER_META = {
   },
 };
 
+const CHAIN_SIMULATION_META = {
+  solana: {
+    latencyBps: 4,
+    routeDriftBps: 5,
+    mevBps: 2,
+    gasVarianceUsd: 0.35,
+    atomicGasVarianceUsd: 0.9,
+    approvalUsd: 0.1,
+    quoteExpiryUsd: 0.35,
+    revertReserveUsd: 0.45,
+    baseFailRiskPct: 10,
+  },
+  base: {
+    latencyBps: 7,
+    routeDriftBps: 9,
+    mevBps: 9,
+    gasVarianceUsd: 1.8,
+    atomicGasVarianceUsd: 4.6,
+    approvalUsd: 0.85,
+    quoteExpiryUsd: 1.1,
+    revertReserveUsd: 1.6,
+    baseFailRiskPct: 19,
+  },
+  arbitrum: {
+    latencyBps: 7,
+    routeDriftBps: 10,
+    mevBps: 11,
+    gasVarianceUsd: 2.1,
+    atomicGasVarianceUsd: 5.1,
+    approvalUsd: 0.95,
+    quoteExpiryUsd: 1.15,
+    revertReserveUsd: 1.8,
+    baseFailRiskPct: 21,
+  },
+  bsc: {
+    latencyBps: 6,
+    routeDriftBps: 8,
+    mevBps: 8,
+    gasVarianceUsd: 0.85,
+    atomicGasVarianceUsd: 2.7,
+    approvalUsd: 0.65,
+    quoteExpiryUsd: 0.8,
+    revertReserveUsd: 1.2,
+    baseFailRiskPct: 17,
+  },
+  ethereum: {
+    latencyBps: 9,
+    routeDriftBps: 12,
+    mevBps: 14,
+    gasVarianceUsd: 6.5,
+    atomicGasVarianceUsd: 14,
+    approvalUsd: 1.4,
+    quoteExpiryUsd: 2.2,
+    revertReserveUsd: 3,
+    baseFailRiskPct: 26,
+  },
+  optimism: {
+    latencyBps: 6,
+    routeDriftBps: 8,
+    mevBps: 7,
+    gasVarianceUsd: 0.95,
+    atomicGasVarianceUsd: 3.1,
+    approvalUsd: 0.7,
+    quoteExpiryUsd: 0.75,
+    revertReserveUsd: 1.15,
+    baseFailRiskPct: 18,
+  },
+  polygon: {
+    latencyBps: 6,
+    routeDriftBps: 8,
+    mevBps: 6,
+    gasVarianceUsd: 0.55,
+    atomicGasVarianceUsd: 2.1,
+    approvalUsd: 0.5,
+    quoteExpiryUsd: 0.7,
+    revertReserveUsd: 1,
+    baseFailRiskPct: 16,
+  },
+  avalanche: {
+    latencyBps: 7,
+    routeDriftBps: 9,
+    mevBps: 8,
+    gasVarianceUsd: 1.1,
+    atomicGasVarianceUsd: 3.6,
+    approvalUsd: 0.8,
+    quoteExpiryUsd: 0.9,
+    revertReserveUsd: 1.4,
+    baseFailRiskPct: 19,
+  },
+};
+
 const FLASH_LOAN_PROVIDER_CATALOG = [
   {
     id: 'aave-v3-base',
@@ -1391,6 +1482,260 @@ function routePlanFromOpportunity(opportunity) {
   return [opportunity.buyDex, opportunity.sellDex]
     .filter(Boolean)
     .map((label) => ({ label }));
+}
+
+function chainSimulationMeta(chainId) {
+  return (
+    CHAIN_SIMULATION_META[chainId] || {
+      latencyBps: 7,
+      routeDriftBps: 8,
+      mevBps: 8,
+      gasVarianceUsd: 1.5,
+      atomicGasVarianceUsd: 4,
+      approvalUsd: 0.6,
+      quoteExpiryUsd: 1,
+      revertReserveUsd: 1.5,
+      baseFailRiskPct: 20,
+    }
+  );
+}
+
+function simulationStatusLabel(netUsd, minRequiredNetUsd) {
+  if (netUsd >= Math.max(0, Number(minRequiredNetUsd || 0))) {
+    return 'tradable';
+  }
+  if (netUsd > 0) {
+    return 'thin';
+  }
+  return 'fail';
+}
+
+function simulationConfidenceLabel(score) {
+  if (score >= 75) {
+    return 'High confidence';
+  }
+  if (score >= 50) {
+    return 'Medium confidence';
+  }
+  if (score >= 30) {
+    return 'Low confidence';
+  }
+  return 'Very low confidence';
+}
+
+async function buildSimulationReference(opportunity, plan, options = {}) {
+  if (opportunity.chainId === 'solana' && opportunity.executionSupported) {
+    try {
+      const validation = await validateSolanaOpportunity(opportunity, {
+        usd: options.capitalUsd || options.usd || plan.requiredCapitalUsd,
+        slippageBps: options.slippageBps,
+      });
+      return {
+        source: validation.validationMode,
+        validation,
+        validatedNetUsd: round2(
+          Number(validation.roundTripNetUsd || 0) -
+            Number(plan.estimatedGasUsd || 0) -
+            Number(plan.plannerBufferUsd || 0),
+        ),
+      };
+    } catch (error) {
+      return {
+        source: 'planner-only',
+        validationError: error.message,
+        validatedNetUsd: null,
+      };
+    }
+  }
+
+  return {
+    source: 'planner-only',
+    validation: null,
+    validatedNetUsd: null,
+  };
+}
+
+function buildExecutionRealitySimulation(opportunity, plan, reference, swapUsdValue) {
+  const meta = chainSimulationMeta(opportunity.chainId);
+  const routePlan = routePlanFromOpportunity(opportunity);
+  const routeComplexity = Math.max(1, routePlan.length);
+  const capitalUsd = Number(swapUsdValue || 0);
+  const baseNetUsd = round2(
+    Number.isFinite(Number(reference.validatedNetUsd))
+      ? Number(reference.validatedNetUsd)
+      : Number(plan.projectedNetUsd || 0),
+  );
+  const routeDriftBps =
+    meta.routeDriftBps +
+    routeComplexity * 2 +
+    (reference.source === 'planner-only' ? 4 : 0) +
+    (plan.capitalSource === 'flash-loan' ? 5 : 0);
+  const latencyBps =
+    meta.latencyBps +
+    (plan.walletType === 'evm' ? 2 : 0) +
+    (reference.source === 'planner-only' ? 3 : 0);
+  const mevBps =
+    meta.mevBps +
+    (plan.capitalSource === 'flash-loan' ? 6 : 0) +
+    (opportunity.atomicCandidate ? 3 : 0);
+  const gasVarianceUsd =
+    meta.gasVarianceUsd +
+    (plan.capitalSource === 'flash-loan' ? meta.atomicGasVarianceUsd : 0);
+  const approvalUsd = plan.walletType === 'evm' ? meta.approvalUsd : 0;
+  const quoteExpiryUsd = reference.source === 'planner-only' ? meta.quoteExpiryUsd : 0.2;
+  const revertReserveUsd =
+    meta.revertReserveUsd +
+    (plan.flashLoanProvider ? 1.1 : 0) +
+    (plan.warnings?.length ? 0.45 : 0);
+
+  const buildScenario = (id, label, multiplier) => {
+    const routeDriftUsd = round2(capitalUsd * ((routeDriftBps * multiplier) / 10000));
+    const latencyUsd = round2(capitalUsd * ((latencyBps * multiplier) / 10000));
+    const mevUsd = round2(capitalUsd * ((mevBps * multiplier) / 10000));
+    const gasUsd = round2(gasVarianceUsd * multiplier);
+    const approvalReserve = round2(approvalUsd * multiplier);
+    const quoteExpiryReserve = round2(quoteExpiryUsd * multiplier);
+    const revertReserve = round2(revertReserveUsd * multiplier);
+    const totalPenaltyUsd = round2(
+      routeDriftUsd +
+        latencyUsd +
+        mevUsd +
+        gasUsd +
+        approvalReserve +
+        quoteExpiryReserve +
+        revertReserve,
+    );
+    const netUsd = round2(baseNetUsd - totalPenaltyUsd);
+    const priceImpactPct = round6(((routeDriftBps + latencyBps + mevBps) * multiplier) / 100);
+    const failRiskPct = clamp(
+      round2(
+        meta.baseFailRiskPct +
+          routeComplexity * 2 +
+          (reference.source === 'planner-only' ? 12 : 0) +
+          (plan.capitalSource === 'flash-loan' ? 10 : 0) +
+          (multiplier - 1) * 18,
+      ),
+      5,
+      98,
+    );
+    return {
+      id,
+      label,
+      multiplier,
+      netUsd,
+      totalPenaltyUsd,
+      priceImpactPct,
+      failRiskPct,
+      status: simulationStatusLabel(netUsd, plan.minRequiredNetUsd),
+      deductions: {
+        routeDriftUsd,
+        latencyUsd,
+        mevUsd,
+        gasUsd,
+        approvalUsd: approvalReserve,
+        quoteExpiryUsd: quoteExpiryReserve,
+        revertReserveUsd: revertReserve,
+      },
+    };
+  };
+
+  const scenarios = [
+    {
+      id: 'base',
+      label: reference.source === 'planner-only' ? 'Planner base' : 'Live quote base',
+      multiplier: 0,
+      netUsd: baseNetUsd,
+      totalPenaltyUsd: 0,
+      priceImpactPct: reference.validation?.maxPriceImpactPct || 0,
+      failRiskPct: clamp(meta.baseFailRiskPct + (reference.source === 'planner-only' ? 10 : 0), 5, 95),
+      status: simulationStatusLabel(baseNetUsd, plan.minRequiredNetUsd),
+      deductions: {
+        routeDriftUsd: 0,
+        latencyUsd: 0,
+        mevUsd: 0,
+        gasUsd: 0,
+        approvalUsd: 0,
+        quoteExpiryUsd: 0,
+        revertReserveUsd: 0,
+      },
+    },
+    buildScenario('realistic', 'Realistic execution', 1),
+    buildScenario('stressed', 'Stressed execution', 1.65),
+    buildScenario('worst', 'Worst reasonable case', 2.35),
+  ];
+  const defaultScenario = scenarios.find((item) => item.id === 'realistic') || scenarios[1];
+
+  let confidencePct = 52;
+  if (reference.source !== 'planner-only') {
+    confidencePct += 18;
+  } else {
+    confidencePct -= 10;
+  }
+  if (plan.status === 'live-ready') {
+    confidencePct += 20;
+  } else if (plan.status === 'plan-ready') {
+    confidencePct += 8;
+  } else if (plan.status === 'sim-ready') {
+    confidencePct += 4;
+  } else if (plan.status === 'atomic-later') {
+    confidencePct -= 10;
+  } else {
+    confidencePct -= 18;
+  }
+  if (opportunity.executionSupported) {
+    confidencePct += 10;
+  }
+  if (plan.capitalSource === 'flash-loan') {
+    confidencePct -= 14;
+  }
+  if (plan.flashLoanProvider?.status === 'mapped') {
+    confidencePct += 5;
+  }
+  if (plan.walletType === 'evm' && EXECUTOR_REGISTRY[opportunity.chainId]?.status !== 'active') {
+    confidencePct -= 15;
+  }
+  if (Number(opportunity.qualityScore || 0) >= 80) {
+    confidencePct += 5;
+  } else if (Number(opportunity.qualityScore || 0) < 60) {
+    confidencePct -= 5;
+  }
+  confidencePct -= Math.min(12, (plan.warnings?.length || 0) * 4);
+  confidencePct = clamp(round2(confidencePct), 5, 95);
+
+  const realismWarnings = [];
+  if (reference.source === 'planner-only') {
+    realismWarnings.push('This chain is still using planner assumptions instead of a live round-trip quote.');
+  }
+  if (plan.capitalSource === 'flash-loan') {
+    realismWarnings.push('Flash-loan execution is still contract-planned here, so this simulation includes execution drag reserves instead of a deployed atomic callback.');
+  }
+  if (plan.walletType === 'evm' && EXECUTOR_REGISTRY[opportunity.chainId]?.status !== 'active') {
+    realismWarnings.push('EVM routing is not live yet, so MEV and route-expiry penalties are modeled rather than observed.');
+  }
+
+  return {
+    profile: 'execution-realism-v1',
+    referenceSource: reference.source,
+    confidencePct,
+    confidenceLabel: simulationConfidenceLabel(confidencePct),
+    defaultScenarioId: defaultScenario.id,
+    defaultScenario,
+    routeComplexity,
+    baseNetUsd,
+    scenarios,
+    realismWarnings,
+    liveValidation:
+      reference.validation
+        ? {
+            status: reference.validation.status,
+            statusLabel: reference.validation.statusLabel,
+            amountUsd: reference.validation.amountUsd,
+            quotedUsdBack: reference.validation.quotedUsdBack,
+            roundTripNetUsd: reference.validation.roundTripNetUsd,
+            maxPriceImpactPct: reference.validation.maxPriceImpactPct,
+          }
+        : null,
+  };
 }
 
 function plannerGasUsd(chainId, preferFlashLoan = false) {
@@ -2942,7 +3287,7 @@ function handleAdvancedPlan(res, body) {
   });
 }
 
-function handleAdvancedSimulation(res, body) {
+async function handleAdvancedSimulation(res, body) {
   const opportunity = findOpportunityForRequest(body);
   if (!opportunity) {
     sendJson(res, 404, {
@@ -2957,11 +3302,14 @@ function handleAdvancedSimulation(res, body) {
     preferFlashLoan: body.preferFlashLoan,
   });
   const swapUsdValue = Number(plan.requiredCapitalUsd || opportunity.capital || 0);
+  const reference = await buildSimulationReference(opportunity, plan, body);
+  const simulation = buildExecutionRealitySimulation(opportunity, plan, reference, swapUsdValue);
+  const defaultScenario = simulation.defaultScenario;
   const guardrails = checkRiskGuardrails({
     body,
     opportunity,
     swapUsdValue,
-    priceImpactPct: 0,
+    priceImpactPct: Number(defaultScenario.priceImpactPct || 0),
     routePlan: routePlanFromOpportunity(opportunity),
     mode: 'demo',
     limitUsd:
@@ -2986,7 +3334,7 @@ function handleAdvancedSimulation(res, body) {
       realizedNetUsd: null,
       failureReason: guardrails.error,
       routePlan: routePlanFromOpportunity(opportunity),
-      priceImpactPct: 0,
+      priceImpactPct: Number(defaultScenario.priceImpactPct || 0),
     });
     sendJson(res, guardrails.status, {
       ok: false,
@@ -2994,6 +3342,7 @@ function handleAdvancedSimulation(res, body) {
       code: guardrails.code,
       risk: guardrails.summary,
       plan,
+      simulation,
       entry: rejected,
     });
     return;
@@ -3001,7 +3350,7 @@ function handleAdvancedSimulation(res, body) {
 
   recordAttemptCooldown(guardrails.cooldownKey);
   state.lastExecutionAt = nowIso();
-  const success = Number(plan.projectedNetUsd || 0) > 0;
+  const success = Number(defaultScenario.netUsd || 0) > 0;
   const entry = appendTradeLedger({
     type: 'advanced-simulation',
     mode: plan.capitalSource === 'flash-loan' ? 'demo-atomic' : 'demo-evm',
@@ -3010,17 +3359,17 @@ function handleAdvancedSimulation(res, body) {
     opportunityId: opportunity.id,
     assetSymbol: opportunity.symbol,
     inputSymbol: opportunity.symbol,
-    outputSymbol: opportunity.symbol,
-    quotedNotionalUsd: round2(swapUsdValue),
-    notionalUsd: round2(swapUsdValue),
-    quotedNetUsd: round2(Number(opportunity.net || 0)),
-    realizedNetUsd: round2(Number(plan.projectedNetUsd || 0)),
-    validationStatus: plan.status,
-    validationLabel: plan.statusLabel,
-    failureReason: plan.warnings.join(' | ') || null,
-    routePlan: routePlanFromOpportunity(opportunity),
-    priceImpactPct: 0,
-    flashLoanProvider: plan.flashLoanProvider?.provider || null,
+      outputSymbol: opportunity.symbol,
+      quotedNotionalUsd: round2(swapUsdValue),
+      notionalUsd: round2(swapUsdValue),
+      quotedNetUsd: round2(Number(opportunity.net || 0)),
+      realizedNetUsd: round2(Number(defaultScenario.netUsd || 0)),
+      validationStatus: plan.status,
+      validationLabel: plan.statusLabel,
+      failureReason: [...(plan.warnings || []), ...(simulation.realismWarnings || [])].join(' | ') || null,
+      routePlan: routePlanFromOpportunity(opportunity),
+      priceImpactPct: Number(defaultScenario.priceImpactPct || 0),
+      flashLoanProvider: plan.flashLoanProvider?.provider || null,
   });
   markExecutionView({
     ...entry,
@@ -3032,6 +3381,7 @@ function handleAdvancedSimulation(res, body) {
   sendJson(res, 200, {
     ok: true,
     plan,
+    simulation,
     entry,
     risk: computeRiskSummary(),
   });
@@ -3421,7 +3771,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && url.pathname === '/api/opportunities/advanced-simulate') {
       const body = await readBody(req);
-      handleAdvancedSimulation(res, body);
+      await handleAdvancedSimulation(res, body);
       return;
     }
 
