@@ -24,6 +24,10 @@ services:
         sync: false
       - key: HELIUS_SENDER_URL
         value: http://ewr-sender.helius-rpc.com/fast
+      - key: JITO_AUTH_UUID
+        sync: false
+      - key: JITO_BLOCK_ENGINE_URL
+        value: https://mainnet.block-engine.jito.wtf
       - key: SIGNER_PRIVATE_KEY_BASE58
         sync: false
       - key: SIGNER_PRIVATE_KEY_JSON
@@ -31,7 +35,9 @@ services:
       - key: JUPITER_API_KEY
         sync: false
       - key: TX_BROADCAST_MODE
-        value: rpc
+        value: auto
+      - key: BROADCAST_LANE_ORDER
+        value: helius-sender,jito,rpc
       - key: SWAP_SLIPPAGE_BPS
         value: 50
       - key: MAX_EXECUTION_USD
@@ -40,6 +46,10 @@ services:
         value: 1000000
       - key: SENDER_TIP_LAMPORTS
         value: 5000
+      - key: JITO_BUNDLE_ONLY
+        value: true
+      - key: JITO_TIP_LAMPORTS
+        value: 1000
       - key: DEMO_EXECUTION_ENABLED
         value: true
       - key: GUARDRAIL_KILL_SWITCH

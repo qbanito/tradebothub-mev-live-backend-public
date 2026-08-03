@@ -16,6 +16,7 @@ import {
 import bs58 from 'bs58';
 
 const VERSION = '3.5.0';
+const SOLANA_BROADCAST_LANES = ['rpc', 'helius-sender', 'jito'];
 const TIP_ACCOUNTS = [
   '4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE',
   'D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ',
@@ -326,10 +327,16 @@ const CONFIG = {
   jupiterApiKey: process.env.JUPITER_API_KEY || '',
   jupiterSwapBaseUrl: process.env.JUPITER_SWAP_BASE_URL || '',
   txBroadcastMode: (process.env.TX_BROADCAST_MODE || 'rpc').toLowerCase(),
+  broadcastLaneOrder: csv(process.env.BROADCAST_LANE_ORDER || ''),
   swapSlippageBps: envNumber('SWAP_SLIPPAGE_BPS', 50),
   maxExecutionUsd: envNumber('MAX_EXECUTION_USD', 500),
   maxPriorityFeeLamports: envNumber('MAX_PRIORITY_FEE_LAMPORTS', 1000000),
   senderTipLamports: envNumber('SENDER_TIP_LAMPORTS', 5000),
+  jitoAuthUuid: process.env.JITO_AUTH_UUID || '',
+  jitoBlockEngineUrl:
+    process.env.JITO_BLOCK_ENGINE_URL || 'https://mainnet.block-engine.jito.wtf',
+  jitoBundleOnly: envBool('JITO_BUNDLE_ONLY', true),
+  jitoTipLamports: envNumber('JITO_TIP_LAMPORTS', 1000),
   skipPreflight: envBool('SKIP_PREFLIGHT', false),
   simulateOnly: envBool('SIMULATE_ONLY', false),
   demoExecutionEnabled: envBool('DEMO_EXECUTION_ENABLED', true),
@@ -355,6 +362,89 @@ const CONFIG = {
   executionBlacklistDexes: csv(process.env.EXECUTION_BLACKLIST_DEXES || ''),
   indexerLookbackLimit: envNumber('INDEXER_LOOKBACK_LIMIT', 100),
 };
+
+function normalizeBroadcastLane(value) {
+  const clean = String(value || '').trim().toLowerCase();
+  if (!clean) {
+    return null;
+  }
+  if (clean === 'helius' || clean === 'sender') {
+    return 'helius-sender';
+  }
+  if (clean === 'jito-block-engine' || clean === 'block-engine') {
+    return 'jito';
+  }
+  if (clean === 'fallback' || clean === 'multi-path' || clean === 'fastest' || clean === 'auto') {
+    return 'auto';
+  }
+  return clean;
+}
+
+function requestedBroadcastLanes() {
+  const mode = normalizeBroadcastLane(CONFIG.txBroadcastMode);
+  if (mode === 'auto') {
+    const configured = (CONFIG.broadcastLaneOrder || [])
+      .map((item) => normalizeBroadcastLane(item))
+      .filter((item) => item && item !== 'auto');
+    return [...new Set(configured.length ? configured : ['helius-sender', 'jito', 'rpc'])];
+  }
+  return mode ? [mode] : ['rpc'];
+}
+
+function broadcastLaneConfig(lane) {
+  if (lane === 'rpc') {
+    return {
+      lane,
+      configured: true,
+      endpoint: CONFIG.solanaRpcUrl,
+      label: 'Solana RPC',
+    };
+  }
+  if (lane === 'helius-sender') {
+    return {
+      lane,
+      configured: Boolean(CONFIG.heliusApiKey && CONFIG.heliusSenderUrl),
+      endpoint: CONFIG.heliusSenderUrl,
+      label: 'Helius Sender',
+      reason: CONFIG.heliusApiKey
+        ? null
+        : 'HELIUS_API_KEY is required for helius-sender mode',
+    };
+  }
+  if (lane === 'jito') {
+    return {
+      lane,
+      configured: Boolean(CONFIG.jitoBlockEngineUrl),
+      endpoint: CONFIG.jitoBlockEngineUrl,
+      label: 'Jito Block Engine',
+      reason: CONFIG.jitoBlockEngineUrl ? null : 'JITO_BLOCK_ENGINE_URL is required for jito mode',
+    };
+  }
+  return {
+    lane,
+    configured: false,
+    endpoint: null,
+    label: lane,
+    reason: `Unsupported broadcast lane: ${lane}`,
+  };
+}
+
+function activeBroadcastLanes() {
+  return requestedBroadcastLanes().filter((lane) => broadcastLaneConfig(lane).configured);
+}
+
+function broadcastLaneStatus() {
+  return requestedBroadcastLanes().map((lane) => {
+    const meta = broadcastLaneConfig(lane);
+    return {
+      lane: meta.lane,
+      label: meta.label,
+      endpoint: meta.endpoint,
+      configured: meta.configured,
+      reason: meta.reason || null,
+    };
+  });
+}
 
 const POLYGON_MAINNET_MANIFEST = readJsonSync(
   new URL('../contracts/deployments/polygon-mainnet.json', import.meta.url),
@@ -1887,6 +1977,8 @@ function decodeSecretKey() {
 function executionReadinessSync() {
   const signer = getSignerInfo();
   const reasons = [];
+  const lanes = broadcastLaneStatus();
+  const activeLanes = activeBroadcastLanes();
   if (CONFIG.executionMode !== 'live') {
     reasons.push('EXECUTION_MODE is not live');
   }
@@ -1899,8 +1991,8 @@ function executionReadinessSync() {
   if (signer.error) {
     reasons.push(signer.error);
   }
-  if (CONFIG.txBroadcastMode === 'helius-sender' && !CONFIG.heliusApiKey) {
-    reasons.push('HELIUS_API_KEY is required for helius-sender mode');
+  if (!activeLanes.length) {
+    reasons.push('No configured broadcast lanes are available');
   }
 
   const canExecuteLive = reasons.length === 0;
@@ -1916,12 +2008,15 @@ function executionReadinessSync() {
     signerPublicKey: signer.publicKey,
     rpcUrl: CONFIG.solanaRpcUrl,
     broadcastMode: CONFIG.txBroadcastMode,
+    broadcastLanes: lanes,
+    activeBroadcastLanes: activeLanes,
     simulateOnly: CONFIG.simulateOnly,
     defaults: {
       slippageBps: CONFIG.swapSlippageBps,
       maxExecutionUsd: CONFIG.maxExecutionUsd,
       maxPriorityFeeLamports: CONFIG.maxPriorityFeeLamports,
       senderTipLamports: CONFIG.senderTipLamports,
+      jitoTipLamports: CONFIG.jitoTipLamports,
       advancedPlannerLimit: CONFIG.advancedPlannerLimit,
       flashLoanMinNetUsd: CONFIG.flashLoanMinNetUsd,
       flashLoanMaxBorrowUsd: CONFIG.flashLoanMaxBorrowUsd,
@@ -3450,7 +3545,7 @@ async function buildSwapTransaction(quoteResponse, userPublicKey) {
   return payload;
 }
 
-async function attachSenderTip(transaction, signer) {
+async function attachCompetitiveTip(transaction, signer, lamports) {
   const altLookups = transaction.message.addressTableLookups || [];
   const altResponses = await Promise.all(
     altLookups.map((lookup) => connection.getAddressLookupTable(lookup.accountKey)),
@@ -3471,10 +3566,108 @@ async function attachSenderTip(transaction, signer) {
       toPubkey: new PublicKey(
         TIP_ACCOUNTS[Math.floor(Math.random() * TIP_ACCOUNTS.length)],
       ),
-      lamports: CONFIG.senderTipLamports,
+      lamports,
     }),
   );
   return new VersionedTransaction(decompiled.compileToV0Message(altAccounts));
+}
+
+function sharedTipLamportsForLanes(lanes) {
+  let lamports = 0;
+  if (lanes.includes('helius-sender')) {
+    lamports = Math.max(lamports, Number(CONFIG.senderTipLamports || 0));
+  }
+  if (lanes.includes('jito')) {
+    lamports = Math.max(lamports, Number(CONFIG.jitoTipLamports || 0));
+  }
+  return lamports;
+}
+
+async function submitViaHeliusSender(serializedBase64) {
+  const response = await fetch(CONFIG.heliusSenderUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: crypto.randomUUID(),
+      method: 'sendTransaction',
+      params: [
+        serializedBase64,
+        {
+          encoding: 'base64',
+          skipPreflight: true,
+          maxRetries: 0,
+        },
+      ],
+    }),
+  });
+  const payload = await readJsonOrText(response);
+  if (!response.ok || payload.error) {
+    throw new Error(payload?.error?.message || payload?.error || 'Helius Sender broadcast failed');
+  }
+  return {
+    signature: payload.result,
+    lane: 'helius-sender',
+  };
+}
+
+async function submitViaJito(serializedBase64) {
+  const url = new URL('/api/v1/transactions', CONFIG.jitoBlockEngineUrl);
+  if (CONFIG.jitoBundleOnly) {
+    url.searchParams.set('bundleOnly', 'true');
+  }
+  const headers = { 'content-type': 'application/json' };
+  if (CONFIG.jitoAuthUuid) {
+    headers['x-jito-auth'] = CONFIG.jitoAuthUuid;
+  }
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: crypto.randomUUID(),
+      method: 'sendTransaction',
+      params: [
+        serializedBase64,
+        {
+          encoding: 'base64',
+        },
+      ],
+    }),
+  });
+  const payload = await readJsonOrText(response);
+  if (!response.ok || payload.error) {
+    throw new Error(payload?.error?.message || payload?.error || 'Jito broadcast failed');
+  }
+  return {
+    signature: payload.result,
+    lane: 'jito',
+    bundleId: response.headers.get('x-bundle-id') || null,
+  };
+}
+
+async function submitViaRpc(serializedBytes) {
+  const signature = await connection.sendRawTransaction(serializedBytes, {
+    skipPreflight: CONFIG.skipPreflight,
+    maxRetries: 3,
+  });
+  return {
+    signature,
+    lane: 'rpc',
+  };
+}
+
+async function submitSignedTransaction(lane, serializedBase64, serializedBytes) {
+  if (lane === 'helius-sender') {
+    return submitViaHeliusSender(serializedBase64);
+  }
+  if (lane === 'jito') {
+    return submitViaJito(serializedBase64);
+  }
+  if (lane === 'rpc') {
+    return submitViaRpc(serializedBytes);
+  }
+  throw new Error(`Unsupported broadcast lane: ${lane}`);
 }
 
 async function broadcastSwap({
@@ -3490,59 +3683,60 @@ async function broadcastSwap({
     throw new Error('Signer is not configured');
   }
 
+  const lanes = activeBroadcastLanes();
+  if (!lanes.length) {
+    throw new Error('No configured broadcast lanes are available');
+  }
+
   let transaction = VersionedTransaction.deserialize(
     Buffer.from(swapResponse.swapTransaction, 'base64'),
   );
 
-  if (CONFIG.txBroadcastMode === 'helius-sender') {
-    transaction = await attachSenderTip(transaction, signer.keypair);
+  const sharedTipLamports = sharedTipLamportsForLanes(lanes);
+  if (sharedTipLamports > 0) {
+    transaction = await attachCompetitiveTip(transaction, signer.keypair, sharedTipLamports);
   }
 
   transaction.sign([signer.keypair]);
-  const serialized = Buffer.from(transaction.serialize()).toString('base64');
-  let signature;
+  const serializedBytes = Buffer.from(transaction.serialize());
+  const serializedBase64 = serializedBytes.toString('base64');
+  const laneErrors = [];
+  let signature = null;
+  let landedLane = null;
+  let bundleId = null;
 
-  if (CONFIG.txBroadcastMode === 'helius-sender') {
-    const response = await fetch(CONFIG.heliusSenderUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: crypto.randomUUID(),
-        method: 'sendTransaction',
-        params: [
-          serialized,
-          {
-            encoding: 'base64',
-            skipPreflight: true,
-            maxRetries: 0,
-          },
-        ],
-      }),
-    });
-    const payload = await response.json();
-    if (!response.ok || payload.error) {
-      throw new Error(payload?.error?.message || 'Helius Sender broadcast failed');
+  for (const lane of lanes) {
+    try {
+      const submission = await submitSignedTransaction(lane, serializedBase64, serializedBytes);
+      signature = submission.signature;
+      bundleId = submission.bundleId || bundleId;
+
+      const confirmation = await connection.confirmTransaction(
+        {
+          signature,
+          blockhash: transaction.message.recentBlockhash,
+          lastValidBlockHeight: swapResponse.lastValidBlockHeight,
+        },
+        'confirmed',
+      );
+
+      if (confirmation.value.err) {
+        throw new Error(JSON.stringify(confirmation.value.err));
+      }
+
+      landedLane = lane;
+      break;
+    } catch (error) {
+      laneErrors.push({
+        lane,
+        message: error.message || String(error),
+      });
     }
-    signature = payload.result;
-  } else {
-    signature = await connection.sendRawTransaction(Buffer.from(transaction.serialize()), {
-      skipPreflight: CONFIG.skipPreflight,
-      maxRetries: 3,
-    });
   }
 
-  const confirmation = await connection.confirmTransaction(
-    {
-      signature,
-      blockhash: transaction.message.recentBlockhash,
-      lastValidBlockHeight: swapResponse.lastValidBlockHeight,
-    },
-    'confirmed',
-  );
-
-  if (confirmation.value.err) {
-    throw new Error(JSON.stringify(confirmation.value.err));
+  if (!signature || !landedLane) {
+    const detail = laneErrors.map((item) => `${item.lane}: ${item.message}`).join(' | ');
+    throw new Error(detail ? `All broadcast lanes failed. ${detail}` : 'All broadcast lanes failed');
   }
 
   const status = await connection.getSignatureStatuses([signature], {
@@ -3572,11 +3766,13 @@ async function broadcastSwap({
     feePayer: signer.publicKey,
     feeLamports:
       Number(swapResponse.prioritizationFeeLamports || 0) +
-      (CONFIG.txBroadcastMode === 'helius-sender'
-        ? Number(CONFIG.senderTipLamports || 0)
-        : 0),
+      Number(sharedTipLamports || 0),
     success: true,
     broadcastMode: CONFIG.txBroadcastMode,
+    broadcastLane: landedLane,
+    broadcastAttempts: laneErrors.length + 1,
+    broadcastErrors: laneErrors,
+    bundleId,
   };
 
   const entry = appendTradeLedger({

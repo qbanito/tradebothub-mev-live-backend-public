@@ -44,9 +44,14 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 ## Optional execution tuning
 
 - `JUPITER_API_KEY`
-- `TX_BROADCAST_MODE=rpc` or `helius-sender`
+- `TX_BROADCAST_MODE=rpc`, `helius-sender`, `jito`, or `auto`
+- `BROADCAST_LANE_ORDER=helius-sender,jito,rpc` when using `TX_BROADCAST_MODE=auto`
 - `HELIUS_API_KEY` when using `helius-sender`
 - `HELIUS_SENDER_URL`
+- `JITO_AUTH_UUID`
+- `JITO_BLOCK_ENGINE_URL`
+- `JITO_BUNDLE_ONLY=true` for Jito revert-protected single-transaction bundle sending
+- `JITO_TIP_LAMPORTS`
 - `SWAP_SLIPPAGE_BPS`
 - `MAX_EXECUTION_USD`
 - `MAX_PRIORITY_FEE_LAMPORTS`
@@ -85,6 +90,19 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - `EXECUTION_BLACKLIST_ASSETS`
 - `EXECUTION_BLACKLIST_DEXES`
 - `SKIP_PREFLIGHT`
+
+### Broadcast lane guidance
+
+- `rpc`: standard Solana RPC submission, lowest complexity, weakest competitive posture.
+- `helius-sender`: best first upgrade for live Solana competition. Helius Sender routes across multiple fast paths and is available on the free tier with per-send SOL tipping.
+- `jito`: direct Jito Block Engine submission for low-latency send and bundle-style protection.
+- `auto`: sequential multi-lane fallback using the same signed transaction across the configured lane order, avoiding double execution while improving landing odds.
+
+Recommended production order for Solana on Monday, August 3, 2026:
+
+1. `TX_BROADCAST_MODE=helius-sender` while validating fees and landing behavior.
+2. `TX_BROADCAST_MODE=auto` with `BROADCAST_LANE_ORDER=helius-sender,jito,rpc`.
+3. Increase `SENDER_TIP_LAMPORTS` and `JITO_TIP_LAMPORTS` only after measuring landed routes against realized PnL.
 
 ## Main endpoints
 
