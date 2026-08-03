@@ -66,6 +66,9 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - `POLYGON_RPC_URL`
 - `POLYGON_AMOY_RPC_URL`
 - `POLYGON_AMOY_CHAIN_ID`
+- `POLYGON_FORK_RPC_URL`
+- `POLYGON_FORK_BLOCK_NUMBER`
+- `POLYGON_FORK_CHAIN_ID`
 - `POLYGON_CHAIN_ID`
 - `POLYGON_AAVE_POOL_ADDRESSES_PROVIDER`
 - `POLYGON_AAVE_POOL`
@@ -74,6 +77,7 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - `POLYGON_FLASH_EXECUTOR_OWNER`
 - `POLYGON_FLASH_EXECUTOR_ADDRESS`
 - `POLYGON_AMOY_FLASH_EXECUTOR_ADDRESS`
+- `POLYGON_FORK_FLASH_EXECUTOR_ADDRESS`
 - `POLYGON_EXECUTOR_APPROVED_TARGETS`
 - `POLYGON_DEPLOYER_PRIVATE_KEY`
 - `TRADE_LEDGER_MAX_ENTRIES`
@@ -128,7 +132,9 @@ If we start with Polygon, the backend repo now includes `contracts/` as the firs
 - `contracts/src/PolygonAaveFlashExecutor.sol` is a minimal owner-controlled flash-loan receiver built around Aave V3 `flashLoanSimple()`.
 - `contracts/deployments/polygon-mainnet.json` stores the Polygon market config and deployment placeholders.
 - `contracts/deployments/polygon-amoy.json` stores the testnet-first staging manifest.
+- `contracts/deployments/polygon-fork.json` stores the preferred fork-validation manifest.
 - `contracts/DEPLOYMENT_PLAN.md` documents the recommended `testnet -> mainnet` rollout.
+- `contracts/RUNBOOK.md` gives the operator checklist for Amoy, fork, and mainnet.
 - The planner can treat Polygon as a flash-loan simulation path, but this does not mean the executor is deployed or live.
 - As of August 3, 2026, this repo has confirmed official Polygon mainnet Aave references, but not a confirmed public Aave Polygon Amoy deployment reference.
 

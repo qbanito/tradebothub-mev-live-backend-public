@@ -1,0 +1,26 @@
+{
+  "chainId": 137,
+  "chainName": "Polygon Mainnet Fork",
+  "network": "fork",
+  "fork": {
+    "enabled": true,
+    "rpcUrlEnv": "POLYGON_FORK_RPC_URL",
+    "blockNumberEnv": "POLYGON_FORK_BLOCK_NUMBER"
+  },
+  "aaveV3": {
+    "poolAddressesProvider": "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb",
+    "pool": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+    "confirmedOfficial": true
+  },
+  "executor": {
+    "contractName": "PolygonAaveFlashExecutor",
+    "owner": "",
+    "deployedAddress": "",
+    "approvedTargets": []
+  },
+  "notes": [
+    "Use this manifest for the real flash-loan validation stage before Polygon mainnet deployment.",
+    "Fill owner, deployedAddress, approvedTargets, and the fork block number you want to reproduce.",
+    "This is the preferred place to validate Aave flash liquidity and callback repayment behavior."
+  ]
+}

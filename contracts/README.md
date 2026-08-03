@@ -16,8 +16,12 @@ That is the right sequence operationally, but there is an important caveat:
 ## What is included
 
 - `src/PolygonAaveFlashExecutor.sol`
+- `src/mocks/MockPolygonSwapTarget.sol`
 - Minimal local Aave interfaces
+- `deployments/polygon-fork.json` for mainnet-fork validation
 - `deployments/polygon-mainnet.json` with current Aave V3 Polygon core addresses
+- `deployments/polygon-amoy.json` for testnet-first staging
+- `RUNBOOK.md` with the staged rollout procedure
 - `foundry.toml` for a standard Foundry layout
 
 ## What it does today
@@ -26,6 +30,9 @@ That is the right sequence operationally, but there is an important caveat:
 - Executes a caller-defined sequence of whitelisted swap/router calls
 - Requires the borrowed asset to be back in the contract before the callback ends
 - Repays principal plus premium and forwards leftover profit to a receiver
+- Provides a tiny mock target to validate owner gates and allowlist behavior in staging
+
+For the mock target, fund it by sending test tokens to the contract address directly, then use `payout()` and `sweep()` as the owner.
 
 ## What it does not do yet
 
@@ -60,6 +67,14 @@ If Amoy does not have the flash-liquidity source we need, the fallback is:
 1. Test contract behavior on Amoy with mocked or non-flash capital paths
 2. Test real flash-loan behavior on a Polygon mainnet fork
 3. Deploy to Polygon mainnet only after fork validation
+
+## Preferred next move
+
+The best next execution lane is now:
+
+1. Amoy for ownership and allowlist behavior
+2. Polygon fork for true Aave flash-loan validation
+3. Polygon mainnet for controlled rollout
 
 ## Suggested first Polygon route
 
