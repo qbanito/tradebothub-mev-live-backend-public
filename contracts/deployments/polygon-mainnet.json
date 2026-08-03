@@ -8,7 +8,7 @@
   },
   "executor": {
     "contractName": "PolygonAaveFlashExecutor",
-    "owner": "",
+    "owner": "0xa617cc0998c0bc4bf86301003ff2c172d57b506e",
     "deployedAddress": "",
     "approvedTargets": []
   },

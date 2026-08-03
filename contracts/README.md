@@ -21,6 +21,8 @@ That is the right sequence operationally, but there is an important caveat:
 - `deployments/polygon-fork.json` for mainnet-fork validation
 - `deployments/polygon-mainnet.json` with current Aave V3 Polygon core addresses
 - `deployments/polygon-amoy.json` for testnet-first staging
+- `remix/PolygonAaveFlashExecutor.remix.sol` for browser-native deployment
+- `REMIX_DEPLOY.md` for a MetaMask-first deploy path
 - `RUNBOOK.md` with the staged rollout procedure
 - `scripts/` with direct deploy and allowlist commands
 - `foundry.toml` for a standard Foundry layout

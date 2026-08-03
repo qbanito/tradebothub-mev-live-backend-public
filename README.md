@@ -134,6 +134,7 @@ If we start with Polygon, the backend repo now includes `contracts/` as the firs
 - `contracts/deployments/polygon-amoy.json` stores the testnet-first staging manifest.
 - `contracts/deployments/polygon-fork.json` stores the preferred fork-validation manifest.
 - `contracts/DEPLOYMENT_PLAN.md` documents the recommended `testnet -> mainnet` rollout.
+- `contracts/REMIX_DEPLOY.md` documents a MetaMask + Remix deployment path for Polygon.
 - `contracts/RUNBOOK.md` gives the operator checklist for Amoy, fork, and mainnet.
 - `contracts/scripts/` provides shell entry points for deploy and allowlist steps once the EVM toolchain and secrets are available.
 - The planner can treat Polygon as a flash-loan simulation path, but this does not mean the executor is deployed or live.
