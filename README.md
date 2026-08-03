@@ -135,6 +135,7 @@ If we start with Polygon, the backend repo now includes `contracts/` as the firs
 - `contracts/deployments/polygon-fork.json` stores the preferred fork-validation manifest.
 - `contracts/DEPLOYMENT_PLAN.md` documents the recommended `testnet -> mainnet` rollout.
 - `contracts/RUNBOOK.md` gives the operator checklist for Amoy, fork, and mainnet.
+- `contracts/scripts/` provides shell entry points for deploy and allowlist steps once the EVM toolchain and secrets are available.
 - The planner can treat Polygon as a flash-loan simulation path, but this does not mean the executor is deployed or live.
 - As of August 3, 2026, this repo has confirmed official Polygon mainnet Aave references, but not a confirmed public Aave Polygon Amoy deployment reference.
 

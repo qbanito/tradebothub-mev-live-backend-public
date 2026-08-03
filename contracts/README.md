@@ -22,6 +22,7 @@ That is the right sequence operationally, but there is an important caveat:
 - `deployments/polygon-mainnet.json` with current Aave V3 Polygon core addresses
 - `deployments/polygon-amoy.json` for testnet-first staging
 - `RUNBOOK.md` with the staged rollout procedure
+- `scripts/` with direct deploy and allowlist commands
 - `foundry.toml` for a standard Foundry layout
 
 ## What it does today
@@ -51,6 +52,14 @@ For the mock target, fund it by sending test tokens to the contract address dire
 - A wallet address to own the executor
 - A curated allowlist of Polygon router targets you want this contract to call
 - An offchain builder that converts planner output into swap calldata
+
+## Direct deploy commands
+
+Once the required env vars are filled, the intended entry points are:
+
+- `contracts/scripts/deploy_polygon_executor.sh`
+- `contracts/scripts/deploy_mock_target.sh`
+- `contracts/scripts/whitelist_target.sh`
 
 ## Testnet-first plan
 
