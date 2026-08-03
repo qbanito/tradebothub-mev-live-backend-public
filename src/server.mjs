@@ -1143,24 +1143,28 @@ const EVM_ROUTE_TARGET_REGISTRY = {
     uniswap: {
       targetAddress: cleanAddress(process.env.ETHEREUM_UNISWAP_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.ETHEREUM_UNISWAP_ROUTER || ''),
+      defaultAddress: '',
       envVar: 'ETHEREUM_UNISWAP_ROUTER',
       label: 'Uniswap router',
     },
     sushiswap: {
       targetAddress: cleanAddress(process.env.ETHEREUM_SUSHISWAP_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.ETHEREUM_SUSHISWAP_ROUTER || ''),
+      defaultAddress: '',
       envVar: 'ETHEREUM_SUSHISWAP_ROUTER',
       label: 'SushiSwap router',
     },
     balancer: {
       targetAddress: cleanAddress(process.env.ETHEREUM_BALANCER_VAULT || ''),
       spenderAddress: cleanAddress(process.env.ETHEREUM_BALANCER_VAULT || ''),
+      defaultAddress: '',
       envVar: 'ETHEREUM_BALANCER_VAULT',
       label: 'Balancer vault',
     },
     curve: {
       targetAddress: cleanAddress(process.env.ETHEREUM_CURVE_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.ETHEREUM_CURVE_ROUTER || ''),
+      defaultAddress: '',
       envVar: 'ETHEREUM_CURVE_ROUTER',
       label: 'Curve router',
     },
@@ -1169,18 +1173,21 @@ const EVM_ROUTE_TARGET_REGISTRY = {
     uniswap: {
       targetAddress: cleanAddress(process.env.BASE_UNISWAP_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.BASE_UNISWAP_ROUTER || ''),
+      defaultAddress: '0x2626664c2603336E57B271c5C0b26F421741e481',
       envVar: 'BASE_UNISWAP_ROUTER',
       label: 'Uniswap router',
     },
     aerodrome: {
       targetAddress: cleanAddress(process.env.BASE_AERODROME_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.BASE_AERODROME_ROUTER || ''),
+      defaultAddress: '',
       envVar: 'BASE_AERODROME_ROUTER',
       label: 'Aerodrome router',
     },
     pancakeswap: {
       targetAddress: cleanAddress(process.env.BASE_PANCAKESWAP_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.BASE_PANCAKESWAP_ROUTER || ''),
+      defaultAddress: '',
       envVar: 'BASE_PANCAKESWAP_ROUTER',
       label: 'PancakeSwap router',
     },
@@ -1189,18 +1196,21 @@ const EVM_ROUTE_TARGET_REGISTRY = {
     uniswap: {
       targetAddress: cleanAddress(process.env.ARBITRUM_UNISWAP_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.ARBITRUM_UNISWAP_ROUTER || ''),
+      defaultAddress: '',
       envVar: 'ARBITRUM_UNISWAP_ROUTER',
       label: 'Uniswap router',
     },
     camelot: {
       targetAddress: cleanAddress(process.env.ARBITRUM_CAMELOT_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.ARBITRUM_CAMELOT_ROUTER || ''),
+      defaultAddress: '',
       envVar: 'ARBITRUM_CAMELOT_ROUTER',
       label: 'Camelot router',
     },
     sushiswap: {
       targetAddress: cleanAddress(process.env.ARBITRUM_SUSHISWAP_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.ARBITRUM_SUSHISWAP_ROUTER || ''),
+      defaultAddress: '',
       envVar: 'ARBITRUM_SUSHISWAP_ROUTER',
       label: 'SushiSwap router',
     },
@@ -1209,24 +1219,28 @@ const EVM_ROUTE_TARGET_REGISTRY = {
     uniswap: {
       targetAddress: cleanAddress(process.env.POLYGON_UNISWAP_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.POLYGON_UNISWAP_ROUTER || ''),
+      defaultAddress: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45',
       envVar: 'POLYGON_UNISWAP_ROUTER',
       label: 'Uniswap router',
     },
     quickswap: {
       targetAddress: cleanAddress(process.env.POLYGON_QUICKSWAP_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.POLYGON_QUICKSWAP_ROUTER || ''),
+      defaultAddress: '0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff',
       envVar: 'POLYGON_QUICKSWAP_ROUTER',
       label: 'QuickSwap router',
     },
     sushiswap: {
       targetAddress: cleanAddress(process.env.POLYGON_SUSHISWAP_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.POLYGON_SUSHISWAP_ROUTER || ''),
+      defaultAddress: '',
       envVar: 'POLYGON_SUSHISWAP_ROUTER',
       label: 'SushiSwap router',
     },
     balancer: {
       targetAddress: cleanAddress(process.env.POLYGON_BALANCER_VAULT || ''),
       spenderAddress: cleanAddress(process.env.POLYGON_BALANCER_VAULT || ''),
+      defaultAddress: '',
       envVar: 'POLYGON_BALANCER_VAULT',
       label: 'Balancer vault',
     },
@@ -1235,12 +1249,14 @@ const EVM_ROUTE_TARGET_REGISTRY = {
     pancakeswap: {
       targetAddress: cleanAddress(process.env.BSC_PANCAKESWAP_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.BSC_PANCAKESWAP_ROUTER || ''),
+      defaultAddress: '',
       envVar: 'BSC_PANCAKESWAP_ROUTER',
       label: 'PancakeSwap router',
     },
     uniswap: {
       targetAddress: cleanAddress(process.env.BSC_UNISWAP_ROUTER || ''),
       spenderAddress: cleanAddress(process.env.BSC_UNISWAP_ROUTER || ''),
+      defaultAddress: '',
       envVar: 'BSC_UNISWAP_ROUTER',
       label: 'Uniswap router',
     },
@@ -2177,14 +2193,28 @@ function resolveRouteTargetDescriptor(chainId, dexLabel, role = 'route') {
   }
 
   const configured = EVM_ROUTE_TARGET_REGISTRY?.[chainId]?.[normalized] || null;
+  const envTargetAddress = cleanAddress(configured?.targetAddress || '');
+  const envSpenderAddress = cleanAddress(configured?.spenderAddress || '');
+  const defaultTargetAddress = cleanAddress(configured?.defaultAddress || '');
+  const targetAddress = envTargetAddress || defaultTargetAddress;
+  const spenderAddress = envSpenderAddress || targetAddress;
+  let source = 'unmapped';
+  if (envTargetAddress) {
+    source = 'env-config';
+  } else if (defaultTargetAddress) {
+    source = 'official-default';
+  } else if (configured) {
+    source = 'mapped-missing-config';
+  }
+
   return {
     role,
     dexLabel: rawLabel,
     normalizedDex: normalized,
-    targetAddress: cleanAddress(configured?.targetAddress || ''),
-    spenderAddress: cleanAddress(configured?.spenderAddress || ''),
-    configured: Boolean(cleanAddress(configured?.targetAddress || '')),
-    source: configured ? 'env-config' : 'unmapped',
+    targetAddress,
+    spenderAddress,
+    configured: Boolean(targetAddress),
+    source,
     envVar: configured?.envVar || null,
     label: configured?.label || `${rawLabel} target`,
   };
@@ -2198,6 +2228,25 @@ function executionPreflightStatusLabel(value) {
     return 'Partially ready';
   }
   return 'Not ready';
+}
+
+function executionPreflightSourceLabel(value) {
+  if (value === 'env-config') {
+    return 'Env config';
+  }
+  if (value === 'official-default') {
+    return 'Official default';
+  }
+  if (value === 'route-label-address') {
+    return 'Inline route address';
+  }
+  if (value === 'mapped-missing-config') {
+    return 'Mapped, missing target';
+  }
+  if (value === 'missing-label') {
+    return 'Missing route label';
+  }
+  return 'Unmapped';
 }
 
 function buildExecutorPreflight(opportunity, plan) {
@@ -2321,6 +2370,7 @@ function buildExecutorPreflight(opportunity, plan) {
       spenderAddress: item.spenderAddress || null,
       configured: item.configured,
       source: item.source,
+      sourceLabel: executionPreflightSourceLabel(item.source),
       envVar: item.envVar,
       allowlisted: item.targetAddress
         ? approvedTargets.has(item.targetAddress.toLowerCase())
