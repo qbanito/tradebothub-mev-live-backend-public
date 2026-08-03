@@ -1138,6 +1138,115 @@ function executorDeploymentForChain(chainId) {
   return null;
 }
 
+const EVM_ROUTE_TARGET_REGISTRY = {
+  ethereum: {
+    uniswap: {
+      targetAddress: cleanAddress(process.env.ETHEREUM_UNISWAP_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.ETHEREUM_UNISWAP_ROUTER || ''),
+      envVar: 'ETHEREUM_UNISWAP_ROUTER',
+      label: 'Uniswap router',
+    },
+    sushiswap: {
+      targetAddress: cleanAddress(process.env.ETHEREUM_SUSHISWAP_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.ETHEREUM_SUSHISWAP_ROUTER || ''),
+      envVar: 'ETHEREUM_SUSHISWAP_ROUTER',
+      label: 'SushiSwap router',
+    },
+    balancer: {
+      targetAddress: cleanAddress(process.env.ETHEREUM_BALANCER_VAULT || ''),
+      spenderAddress: cleanAddress(process.env.ETHEREUM_BALANCER_VAULT || ''),
+      envVar: 'ETHEREUM_BALANCER_VAULT',
+      label: 'Balancer vault',
+    },
+    curve: {
+      targetAddress: cleanAddress(process.env.ETHEREUM_CURVE_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.ETHEREUM_CURVE_ROUTER || ''),
+      envVar: 'ETHEREUM_CURVE_ROUTER',
+      label: 'Curve router',
+    },
+  },
+  base: {
+    uniswap: {
+      targetAddress: cleanAddress(process.env.BASE_UNISWAP_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.BASE_UNISWAP_ROUTER || ''),
+      envVar: 'BASE_UNISWAP_ROUTER',
+      label: 'Uniswap router',
+    },
+    aerodrome: {
+      targetAddress: cleanAddress(process.env.BASE_AERODROME_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.BASE_AERODROME_ROUTER || ''),
+      envVar: 'BASE_AERODROME_ROUTER',
+      label: 'Aerodrome router',
+    },
+    pancakeswap: {
+      targetAddress: cleanAddress(process.env.BASE_PANCAKESWAP_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.BASE_PANCAKESWAP_ROUTER || ''),
+      envVar: 'BASE_PANCAKESWAP_ROUTER',
+      label: 'PancakeSwap router',
+    },
+  },
+  arbitrum: {
+    uniswap: {
+      targetAddress: cleanAddress(process.env.ARBITRUM_UNISWAP_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.ARBITRUM_UNISWAP_ROUTER || ''),
+      envVar: 'ARBITRUM_UNISWAP_ROUTER',
+      label: 'Uniswap router',
+    },
+    camelot: {
+      targetAddress: cleanAddress(process.env.ARBITRUM_CAMELOT_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.ARBITRUM_CAMELOT_ROUTER || ''),
+      envVar: 'ARBITRUM_CAMELOT_ROUTER',
+      label: 'Camelot router',
+    },
+    sushiswap: {
+      targetAddress: cleanAddress(process.env.ARBITRUM_SUSHISWAP_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.ARBITRUM_SUSHISWAP_ROUTER || ''),
+      envVar: 'ARBITRUM_SUSHISWAP_ROUTER',
+      label: 'SushiSwap router',
+    },
+  },
+  polygon: {
+    uniswap: {
+      targetAddress: cleanAddress(process.env.POLYGON_UNISWAP_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.POLYGON_UNISWAP_ROUTER || ''),
+      envVar: 'POLYGON_UNISWAP_ROUTER',
+      label: 'Uniswap router',
+    },
+    quickswap: {
+      targetAddress: cleanAddress(process.env.POLYGON_QUICKSWAP_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.POLYGON_QUICKSWAP_ROUTER || ''),
+      envVar: 'POLYGON_QUICKSWAP_ROUTER',
+      label: 'QuickSwap router',
+    },
+    sushiswap: {
+      targetAddress: cleanAddress(process.env.POLYGON_SUSHISWAP_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.POLYGON_SUSHISWAP_ROUTER || ''),
+      envVar: 'POLYGON_SUSHISWAP_ROUTER',
+      label: 'SushiSwap router',
+    },
+    balancer: {
+      targetAddress: cleanAddress(process.env.POLYGON_BALANCER_VAULT || ''),
+      spenderAddress: cleanAddress(process.env.POLYGON_BALANCER_VAULT || ''),
+      envVar: 'POLYGON_BALANCER_VAULT',
+      label: 'Balancer vault',
+    },
+  },
+  bsc: {
+    pancakeswap: {
+      targetAddress: cleanAddress(process.env.BSC_PANCAKESWAP_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.BSC_PANCAKESWAP_ROUTER || ''),
+      envVar: 'BSC_PANCAKESWAP_ROUTER',
+      label: 'PancakeSwap router',
+    },
+    uniswap: {
+      targetAddress: cleanAddress(process.env.BSC_UNISWAP_ROUTER || ''),
+      spenderAddress: cleanAddress(process.env.BSC_UNISWAP_ROUTER || ''),
+      envVar: 'BSC_UNISWAP_ROUTER',
+      label: 'Uniswap router',
+    },
+  },
+};
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -2036,6 +2145,202 @@ function marketAdaptersForOpportunity(opportunity) {
     }));
 }
 
+function resolveRouteTargetDescriptor(chainId, dexLabel, role = 'route') {
+  const rawLabel = String(dexLabel || '').trim();
+  const normalized = normalizeDexKey(rawLabel);
+  if (!normalized) {
+    return {
+      role,
+      dexLabel: rawLabel || 'unknown',
+      normalizedDex: normalized,
+      targetAddress: '',
+      spenderAddress: '',
+      configured: false,
+      source: 'missing-label',
+      envVar: null,
+      label: 'Unknown target',
+    };
+  }
+
+  if (/^0x[a-f0-9]{40}$/i.test(rawLabel)) {
+    return {
+      role,
+      dexLabel: rawLabel,
+      normalizedDex: normalized,
+      targetAddress: rawLabel,
+      spenderAddress: rawLabel,
+      configured: true,
+      source: 'route-label-address',
+      envVar: null,
+      label: 'Custom route target',
+    };
+  }
+
+  const configured = EVM_ROUTE_TARGET_REGISTRY?.[chainId]?.[normalized] || null;
+  return {
+    role,
+    dexLabel: rawLabel,
+    normalizedDex: normalized,
+    targetAddress: cleanAddress(configured?.targetAddress || ''),
+    spenderAddress: cleanAddress(configured?.spenderAddress || ''),
+    configured: Boolean(cleanAddress(configured?.targetAddress || '')),
+    source: configured ? 'env-config' : 'unmapped',
+    envVar: configured?.envVar || null,
+    label: configured?.label || `${rawLabel} target`,
+  };
+}
+
+function executionPreflightStatusLabel(value) {
+  if (value === 'ready') {
+    return 'Executor-ready';
+  }
+  if (value === 'partial') {
+    return 'Partially ready';
+  }
+  return 'Not ready';
+}
+
+function buildExecutorPreflight(opportunity, plan) {
+  if (!opportunity || plan.walletType === 'solana') {
+    return null;
+  }
+
+  const deployment = executorDeploymentForChain(opportunity.chainId);
+  const targetDescriptors = [
+    resolveRouteTargetDescriptor(opportunity.chainId, opportunity.buyDex, 'buy'),
+    resolveRouteTargetDescriptor(opportunity.chainId, opportunity.sellDex, 'sell'),
+  ];
+  const uniqueTargets = [];
+  const seenTargetKeys = new Set();
+  for (const item of targetDescriptors) {
+    const key = item.targetAddress
+      ? item.targetAddress.toLowerCase()
+      : `${item.role}:${item.normalizedDex}:${item.envVar || item.dexLabel}`;
+    if (seenTargetKeys.has(key)) {
+      continue;
+    }
+    seenTargetKeys.add(key);
+    uniqueTargets.push(item);
+  }
+
+  const approvedTargets = new Set(
+    (deployment?.approvedTargets || []).map((item) => String(item).toLowerCase()),
+  );
+  const missingTargetConfig = uniqueTargets.filter((item) => !item.targetAddress);
+  const missingAllowlistTargets = uniqueTargets.filter(
+    (item) => item.targetAddress && !approvedTargets.has(item.targetAddress.toLowerCase()),
+  );
+  const routeTargetsReady = !missingTargetConfig.length;
+  const allowlistReady = !missingAllowlistTargets.length;
+  const privateReady = Boolean(plan.privateSubmitReady);
+  const adapterReady = Boolean(plan.adapterCoverageReady);
+  const flashExecutorRelevant = opportunity.chainId === 'polygon' && plan.capitalSource === 'flash-loan';
+  const flashExecutorReady = Boolean(
+    flashExecutorRelevant &&
+      deployment &&
+      routeTargetsReady &&
+      allowlistReady &&
+      adapterReady &&
+      privateReady &&
+      plan.flashLoanProvider,
+  );
+  const privateRouteReady = Boolean(
+    !flashExecutorRelevant &&
+      routeTargetsReady &&
+      adapterReady &&
+      privateReady,
+  );
+
+  let status = 'not-ready';
+  if (flashExecutorReady || privateRouteReady) {
+    status = 'ready';
+  } else if (
+    routeTargetsReady ||
+    adapterReady ||
+    privateReady ||
+    Boolean(plan.flashLoanProvider) ||
+    Boolean(deployment)
+  ) {
+    status = 'partial';
+  }
+
+  const actionItems = [];
+  if (flashExecutorRelevant && !deployment) {
+    actionItems.push('Deploy or register the Polygon flash executor before attempting atomic execution.');
+  }
+  if (missingTargetConfig.length) {
+    actionItems.push(
+      `Configure route targets for ${missingTargetConfig
+        .map((item) => item.envVar || item.dexLabel)
+        .join(', ')}.`,
+    );
+  }
+  if (missingAllowlistTargets.length) {
+    actionItems.push(
+      `Allowlist ${missingAllowlistTargets.map((item) => item.targetAddress).join(', ')} in the executor contract.`,
+    );
+  }
+  if (!adapterReady) {
+    actionItems.push('Finish mapping both route legs to production-grade EVM adapters.');
+  }
+  if (!privateReady) {
+    actionItems.push('Map a private submission lane before treating the route as protected from public mempool leakage.');
+  }
+  if (flashExecutorRelevant && !plan.flashLoanProvider) {
+    actionItems.push('Choose a mapped flash-liquidity provider for the atomic callback path.');
+  }
+
+  return {
+    chainId: opportunity.chainId,
+    chainName: opportunity.chainName,
+    status,
+    statusLabel: executionPreflightStatusLabel(status),
+    flashExecutorRelevant,
+    deployment: deployment
+      ? {
+          contractAddress: deployment.contractAddress,
+          owner: deployment.owner,
+          approvedTargets: deployment.approvedTargets,
+          status: deployment.status,
+          statusLabel: deployment.statusLabel,
+          explorerUrl: deployment.explorerUrl,
+        }
+      : null,
+    routeTargetsReady,
+    allowlistReady,
+    adapterReady,
+    privateReady,
+    flashExecutorReady,
+    privateRouteReady,
+    targetDescriptors: uniqueTargets.map((item) => ({
+      role: item.role,
+      dexLabel: item.dexLabel,
+      normalizedDex: item.normalizedDex,
+      label: item.label,
+      targetAddress: item.targetAddress || null,
+      spenderAddress: item.spenderAddress || null,
+      configured: item.configured,
+      source: item.source,
+      envVar: item.envVar,
+      allowlisted: item.targetAddress
+        ? approvedTargets.has(item.targetAddress.toLowerCase())
+        : false,
+    })),
+    missingTargetConfig: missingTargetConfig.map((item) => ({
+      role: item.role,
+      dexLabel: item.dexLabel,
+      envVar: item.envVar,
+    })),
+    missingAllowlistTargets: missingAllowlistTargets.map((item) => ({
+      role: item.role,
+      dexLabel: item.dexLabel,
+      targetAddress: item.targetAddress,
+      envVar: item.envVar,
+    })),
+    actionItems,
+  };
+}
+
 function choosePrivateExecutionLane(opportunity, options = {}) {
   if (!opportunity || opportunity.chainId === 'solana') {
     return null;
@@ -2569,6 +2874,18 @@ function buildOpportunityExecutionPlan(opportunity, options = {}) {
   }
 
   const capitalSource = preferFlashLoan ? 'flash-loan' : 'own-capital';
+  const preflight = buildExecutorPreflight(opportunity, {
+    walletType,
+    capitalSource,
+    adapterCoverageReady,
+    privateSubmitReady,
+    flashLoanProvider: provider
+      ? {
+          id: provider.id,
+          provider: provider.provider,
+        }
+      : null,
+  });
   return {
     id: `${opportunity.id}:${capitalSource}`,
     createdAt: nowIso(),
@@ -2607,6 +2924,7 @@ function buildOpportunityExecutionPlan(opportunity, options = {}) {
         }
       : null,
     privateSubmitReady,
+    executionPreflight: preflight,
     flashLoanProvider: provider
       ? {
           id: provider.id,
