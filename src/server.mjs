@@ -333,6 +333,10 @@ const CONFIG = {
   flashLoanMinNetUsd: envNumber('FLASH_LOAN_MIN_NET_USD', 15),
   flashLoanMaxBorrowUsd: envNumber('FLASH_LOAN_MAX_BORROW_USD', 25000),
   evmWalletExecutionEnabled: envBool('EVM_WALLET_EXECUTION_ENABLED', true),
+  shadowExecutionEnabled: envBool('SHADOW_EXECUTION_ENABLED', true),
+  shadowTrackLimit: envNumber('SHADOW_TRACK_LIMIT', 8),
+  shadowHorizonMs: envNumber('SHADOW_HORIZON_MS', 90000),
+  shadowHistoryMaxEntries: envNumber('SHADOW_HISTORY_MAX_ENTRIES', 250),
   tradeLedgerMaxEntries: envNumber('TRADE_LEDGER_MAX_ENTRIES', 500),
   tradeLedgerPath:
     process.env.TRADE_LEDGER_PATH || '/tmp/tradebothub-mev-runtime.json',
@@ -801,6 +805,11 @@ const state = {
   searchers: [],
   executions: [],
   tradeLedger: [],
+  shadow: {
+    pending: [],
+    history: [],
+    lastSweepAt: null,
+  },
   errors: [],
   lastScanAt: null,
   lastExecutionAt: null,
@@ -887,6 +896,12 @@ async function loadRuntimeState() {
     const raw = await fs.readFile(CONFIG.tradeLedgerPath, 'utf8');
     const parsed = JSON.parse(raw);
     state.tradeLedger = Array.isArray(parsed.tradeLedger) ? parsed.tradeLedger : [];
+    state.shadow = {
+      ...state.shadow,
+      ...(parsed.shadow || {}),
+      pending: Array.isArray(parsed.shadow?.pending) ? parsed.shadow.pending : [],
+      history: Array.isArray(parsed.shadow?.history) ? parsed.shadow.history : [],
+    };
     state.risk = {
       ...state.risk,
       ...(parsed.risk || {}),
@@ -916,6 +931,7 @@ async function persistRuntimeState() {
       JSON.stringify(
         {
           tradeLedger: state.tradeLedger,
+          shadow: state.shadow,
           risk: state.risk,
         },
         null,
@@ -1037,6 +1053,199 @@ function appendTradeLedger(entry) {
   return normalized;
 }
 
+function shadowFingerprint(input) {
+  return [
+    input.chainId,
+    input.symbol,
+    input.buyDex,
+    input.sellDex,
+    round2(Number(input.capital || input.predictedCapitalUsd || 0)),
+  ].join(':');
+}
+
+function routeSignatureLabel(item) {
+  return [item.buyDex, item.sellDex].filter(Boolean).join(' -> ') || 'planned';
+}
+
+function recentShadowFingerprints() {
+  const threshold = Date.now() - CONFIG.shadowHorizonMs * 2;
+  const recentHistory = state.shadow.history.filter(
+    (item) => new Date(item.queuedAt || item.createdAt || 0).getTime() >= threshold,
+  );
+  return new Set([
+    ...state.shadow.pending.map((item) => item.fingerprint),
+    ...recentHistory.map((item) => item.fingerprint),
+  ]);
+}
+
+function queueShadowCandidates() {
+  if (!CONFIG.shadowExecutionEnabled) {
+    return;
+  }
+  const now = Date.now();
+  const recentFingerprints = recentShadowFingerprints();
+  let changed = false;
+  const candidates = state.opportunities
+    .filter((item) => Number(item.net || 0) > 0)
+    .sort((a, b) => b.qualityScore - a.qualityScore || Number(b.net || 0) - Number(a.net || 0))
+    .slice(0, CONFIG.shadowTrackLimit);
+
+  for (const item of candidates) {
+    const fingerprint = shadowFingerprint(item);
+    if (recentFingerprints.has(fingerprint)) {
+      continue;
+    }
+    state.shadow.pending.push({
+      id: crypto.randomUUID(),
+      fingerprint,
+      queuedAt: nowIso(),
+      evaluateAfter: new Date(now + CONFIG.shadowHorizonMs).toISOString(),
+      opportunityId: item.id,
+      chainId: item.chainId,
+      chainName: item.chainName,
+      symbol: item.symbol,
+      buyDex: item.buyDex,
+      sellDex: item.sellDex,
+      routeLabel: routeSignatureLabel(item),
+      predictedNetUsd: round2(Number(item.net || 0)),
+      predictedSpreadBps: round2(Number(item.spreadBps || 0)),
+      predictedCapitalUsd: round2(Number(item.capital || 0)),
+      qualityScore: round2(Number(item.qualityScore || 0)),
+      qualityTier: item.qualityTier,
+    });
+    recentFingerprints.add(fingerprint);
+    changed = true;
+  }
+
+  if (state.shadow.pending.length > CONFIG.shadowTrackLimit * 3) {
+    state.shadow.pending = state.shadow.pending.slice(-CONFIG.shadowTrackLimit * 3);
+    changed = true;
+  }
+  if (changed) {
+    void persistRuntimeState();
+  }
+}
+
+function findObservedShadowOpportunity(shadowItem) {
+  const exact = state.opportunities.find((item) =>
+    item.chainId === shadowItem.chainId &&
+    item.symbol === shadowItem.symbol &&
+    item.buyDex === shadowItem.buyDex &&
+    item.sellDex === shadowItem.sellDex
+  );
+  if (exact) {
+    return exact;
+  }
+  return state.opportunities
+    .filter((item) => item.chainId === shadowItem.chainId && item.symbol === shadowItem.symbol)
+    .sort((a, b) => b.qualityScore - a.qualityScore || Number(b.net || 0) - Number(a.net || 0))[0] || null;
+}
+
+function evaluatePendingShadowCandidates() {
+  if (!CONFIG.shadowExecutionEnabled || !state.shadow.pending.length) {
+    return;
+  }
+  const now = Date.now();
+  const remaining = [];
+  let changed = false;
+
+  for (const item of state.shadow.pending) {
+    const evaluateAt = new Date(item.evaluateAfter || 0).getTime();
+    if (!Number.isFinite(evaluateAt) || evaluateAt > now) {
+      remaining.push(item);
+      continue;
+    }
+
+    const observed = findObservedShadowOpportunity(item);
+    const predictedNetUsd = round2(Number(item.predictedNetUsd || 0));
+    const observedNetUsd = observed ? round2(Number(observed.net || 0)) : 0;
+    const observedSpreadBps = observed ? round2(Number(observed.spreadBps || 0)) : 0;
+    const survived = observedNetUsd > 0;
+    const status = observed
+      ? survived
+        ? 'survived'
+        : 'decayed'
+      : 'disappeared';
+    const capturePct = predictedNetUsd > 0
+      ? round2((observedNetUsd / predictedNetUsd) * 100)
+      : 0;
+    const absErrorUsd = round2(Math.abs(observedNetUsd - predictedNetUsd));
+    const toleranceUsd = Math.max(5, round2(predictedNetUsd * 0.25));
+    const calibration = absErrorUsd <= toleranceUsd
+      ? 'tight'
+      : absErrorUsd <= Math.max(10, round2(predictedNetUsd * 0.6))
+        ? 'drifted'
+        : 'missed';
+
+    state.shadow.history.unshift({
+      id: crypto.randomUUID(),
+      fingerprint: item.fingerprint,
+      queuedAt: item.queuedAt,
+      evaluatedAt: nowIso(),
+      evaluateAfter: item.evaluateAfter,
+      chainId: item.chainId,
+      chainName: item.chainName,
+      symbol: item.symbol,
+      buyDex: item.buyDex,
+      sellDex: item.sellDex,
+      routeLabel: item.routeLabel,
+      predictedNetUsd,
+      predictedSpreadBps: round2(Number(item.predictedSpreadBps || 0)),
+      predictedCapitalUsd: round2(Number(item.predictedCapitalUsd || 0)),
+      observedNetUsd,
+      observedSpreadBps,
+      observedQualityScore: observed ? round2(Number(observed.qualityScore || 0)) : null,
+      status,
+      survived,
+      capturePct: round2(capturePct),
+      absErrorUsd,
+      calibration,
+      matchedOpportunityId: observed?.id || null,
+      observedRouteLabel: observed ? routeSignatureLabel(observed) : null,
+    });
+    changed = true;
+  }
+
+  state.shadow.pending = remaining;
+  state.shadow.history = state.shadow.history.slice(0, CONFIG.shadowHistoryMaxEntries);
+  state.shadow.lastSweepAt = nowIso();
+  if (changed) {
+    void persistRuntimeState();
+  }
+}
+
+function computeShadowSummary() {
+  const items = state.shadow.history || [];
+  const evaluated = items.length;
+  const survivedCount = items.filter((item) => item.status === 'survived').length;
+  const decayedCount = items.filter((item) => item.status === 'decayed').length;
+  const disappearedCount = items.filter((item) => item.status === 'disappeared').length;
+  const tightCount = items.filter((item) => item.calibration === 'tight').length;
+  const avgCapturePct = evaluated
+    ? round2(items.reduce((sum, item) => sum + Number(item.capturePct || 0), 0) / evaluated)
+    : 0;
+  const avgAbsErrorUsd = evaluated
+    ? round2(items.reduce((sum, item) => sum + Number(item.absErrorUsd || 0), 0) / evaluated)
+    : 0;
+  const accuracyPct = evaluated ? round2((tightCount / evaluated) * 100) : 0;
+
+  return {
+    enabled: CONFIG.shadowExecutionEnabled,
+    pendingCount: state.shadow.pending.length,
+    evaluatedCount: evaluated,
+    survivedCount,
+    decayedCount,
+    disappearedCount,
+    tightCount,
+    avgCapturePct,
+    avgAbsErrorUsd,
+    accuracyPct,
+    horizonMs: CONFIG.shadowHorizonMs,
+    trackLimit: CONFIG.shadowTrackLimit,
+    lastSweepAt: state.shadow.lastSweepAt,
+  };
+}
+
 function markExecutionView(entry) {
   const executionView = {
     id: entry.id,
@@ -1123,6 +1332,7 @@ function getStats() {
   const signer = getSignerInfo();
   const readiness = executionReadinessSync();
   const risk = computeRiskSummary();
+  const shadow = computeShadowSummary();
   const activeChains = [...new Set(state.market.map((item) => item.chainId).filter(Boolean))];
   const highQualityCount = state.opportunities.filter((item) =>
     ['A', 'B'].includes(item.qualityTier),
@@ -1155,6 +1365,9 @@ function getStats() {
     readyOpportunityCount,
     flashLoanCandidateCount,
     planReadyCount,
+    shadowPendingCount: shadow.pendingCount,
+    shadowEvaluatedCount: shadow.evaluatedCount,
+    shadowAccuracyPct: shadow.accuracyPct,
     executorCount: readiness.executors.length,
     liveExecutorCount: liveExecutors,
     estimatedNetUsd: round2(
@@ -2289,6 +2502,8 @@ async function scanMarket() {
       .sort((a, b) => b.liquidity - a.liquidity)
       .slice(0, CONFIG.maxMarketRows);
     state.opportunities = deriveOpportunities(state.market);
+    evaluatePendingShadowCandidates();
+    queueShadowCandidates();
     state.lastScanAt = nowIso();
     broadcastSnapshot();
   } catch (error) {
@@ -3711,6 +3926,15 @@ const server = http.createServer(async (req, res) => {
           ...item,
           walletType: plannerWalletType(item.chainId),
         })),
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/shadow-executions') {
+      sendJson(res, 200, {
+        summary: computeShadowSummary(),
+        items: state.shadow.history.slice(0, limitFrom(url, 50)),
+        pending: state.shadow.pending.slice(0, limitFrom(url, 20)),
       });
       return;
     }
