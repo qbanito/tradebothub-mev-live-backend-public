@@ -19,6 +19,7 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - Flash-loan provider catalog with fee, borrow-size, and readiness metadata.
 - Advanced simulation endpoint that writes planner-stage results into the trade ledger.
 - Frontend-ready EVM wallet planning support and advanced route selection flow.
+- A first Polygon contract workspace scaffold for an Aave V3 flash-loan executor under `contracts/`.
 
 ## Still true from v3.4
 
@@ -62,6 +63,14 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - `FLASH_LOAN_MIN_NET_USD`
 - `FLASH_LOAN_MAX_BORROW_USD`
 - `EVM_WALLET_EXECUTION_ENABLED`
+- `POLYGON_RPC_URL`
+- `POLYGON_CHAIN_ID`
+- `POLYGON_AAVE_POOL_ADDRESSES_PROVIDER`
+- `POLYGON_AAVE_POOL`
+- `POLYGON_FLASH_EXECUTOR_OWNER`
+- `POLYGON_FLASH_EXECUTOR_ADDRESS`
+- `POLYGON_EXECUTOR_APPROVED_TARGETS`
+- `POLYGON_DEPLOYER_PRIVATE_KEY`
 - `TRADE_LEDGER_MAX_ENTRIES`
 - `TRADE_LEDGER_PATH`
 - `EXECUTION_BLACKLIST_ASSETS`
@@ -104,7 +113,16 @@ Set `CORS_ORIGIN` to your Netlify URL before going live.
 - Live execution stays blocked until mode, flags, signer, and broadcast prerequisites are all satisfied.
 - Wallet-connected execution is the recommended path when you want the browser frontend to sign locally instead of storing a private key in Render.
 - Multi-chain opportunities are discovery-only unless you add a real executor for that chain. The built-in executor flow remains Solana-focused.
+- The Polygon contract scaffold is only a starting point. You still need audited router calldata generation, whitelisted targets, and a real deployment before sending mainnet value through it.
 - If `TRADE_LEDGER_PATH` points to `/tmp`, the ledger is runtime-local and can be lost after restart or redeploy.
+
+## Polygon contract path
+
+If we start with Polygon, the backend repo now includes `contracts/` as the first EVM contract workspace.
+
+- `contracts/src/PolygonAaveFlashExecutor.sol` is a minimal owner-controlled flash-loan receiver built around Aave V3 `flashLoanSimple()`.
+- `contracts/deployments/polygon-mainnet.json` stores the Polygon market config and deployment placeholders.
+- The planner can treat Polygon as a flash-loan simulation path, but this does not mean the executor is deployed or live.
 
 ## Scanner tuning
 

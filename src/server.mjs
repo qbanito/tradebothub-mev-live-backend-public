@@ -451,7 +451,7 @@ const EXECUTOR_REGISTRY = {
     walletSupport: false,
     flashLoanStage: 'planned',
     routeProvider: 'planned',
-    notes: 'Tracked for discovery expansion.',
+    notes: 'Planner is active and the local Aave V3 contract scaffold is ready, but Polygon deployment and router wiring are still pending.',
   },
   avalanche: {
     chainId: 'avalanche',
@@ -492,7 +492,7 @@ const STRATEGY_CATALOG = [
     id: 'multi-chain-router',
     name: 'Multi-chain router',
     stage: 'building',
-    chainIds: ['base', 'arbitrum', 'bsc'],
+    chainIds: ['base', 'arbitrum', 'polygon', 'bsc'],
     flashLoan: false,
     atomic: false,
     requiresOwnCapital: true,
@@ -502,7 +502,7 @@ const STRATEGY_CATALOG = [
     id: 'atomic-arb-engine',
     name: 'Atomic arbitrage engine',
     stage: 'planned',
-    chainIds: ['solana', 'base', 'arbitrum', 'bsc'],
+    chainIds: ['solana', 'base', 'arbitrum', 'polygon', 'bsc'],
     flashLoan: true,
     atomic: true,
     requiresOwnCapital: false,
@@ -512,7 +512,7 @@ const STRATEGY_CATALOG = [
     id: 'flash-loan-orchestrator',
     name: 'Flash-loan orchestrator',
     stage: 'research',
-    chainIds: ['base', 'arbitrum', 'bsc', 'ethereum'],
+    chainIds: ['base', 'arbitrum', 'polygon', 'bsc', 'ethereum'],
     flashLoan: true,
     atomic: true,
     requiresOwnCapital: false,
@@ -782,6 +782,18 @@ const FLASH_LOAN_PROVIDER_CATALOG = [
     status: 'research',
     settlement: 'pool callback',
     notes: 'Lower fee path when the route is centered around Pancake pools.',
+  },
+  {
+    id: 'aave-v3-polygon',
+    provider: 'Aave V3',
+    chainId: 'polygon',
+    chainName: 'Polygon',
+    assetSymbols: ['WETH', 'WBTC', 'USDC', 'WMATIC'],
+    feeBps: 9,
+    maxBorrowUsd: 22000,
+    status: 'mapped',
+    settlement: 'single-chain atomic',
+    notes: 'Primary Polygon flash-liquidity lane for the first deployed executor.',
   },
   {
     id: 'aave-v3-ethereum',
@@ -2266,7 +2278,7 @@ function strategyHintsForOpportunity(opportunity) {
     };
   }
 
-  const flashLoanCandidate = ['base', 'arbitrum', 'bsc', 'ethereum'].includes(
+  const flashLoanCandidate = ['base', 'arbitrum', 'polygon', 'bsc', 'ethereum'].includes(
     opportunity.chainId,
   );
   return {
